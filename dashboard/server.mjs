@@ -779,9 +779,25 @@ const server = createServer(async (req, res) => {
             }
         }
 
+        // OpenAI-compatible Models
+        if (url.pathname === '/api/openai-compatible/models' && req.method === 'POST') {
+            const { baseUrl, key } = await readBody(req);
+            if (!baseUrl) return sendJSON(res, 400, { models: [], error: 'Missing baseUrl' });
+            const cleanBaseUrl = String(baseUrl).replace(/\/+$/, '');
+            const apiKey = key || 'not-needed';
+            try {
+                const result = await fetchExternal(`${cleanBaseUrl}/models`, { 'Authorization': `Bearer ${apiKey}` });
+                const parsed = JSON.parse(result.data);
+                const models = (parsed.data || []).map(m => m.id).filter(Boolean);
+                return sendJSON(res, 200, { models });
+            } catch (e) {
+                return sendJSON(res, 200, { models: [], error: e.message });
+            }
+        }
+
         // Verify Key
         if (url.pathname === '/api/verify-key' && req.method === 'POST') {
-            const { provider, key } = await readBody(req);
+            const { provider, key, baseUrl } = await readBody(req);
             let valid = false;
             if (provider === 'openrouter') { const r = await fetchExternal('https://openrouter.ai/api/v1/auth/key', { 'Authorization': `Bearer ${key}` }); valid = r.status === 200; }
             else if (provider === 'nvidia') { const r = await fetchExternal('https://integrate.api.nvidia.com/v1/models', { 'Authorization': `Bearer ${key}` }); valid = r.status === 200; }
@@ -789,6 +805,26 @@ const server = createServer(async (req, res) => {
             else if (provider === 'gemini') { const r = await fetchExternal(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`); valid = r.status === 200; }
             else if (provider === 'anthropic') { const r = await fetchExternal('https://api.anthropic.com/v1/models', { 'x-api-key': key, 'anthropic-version': '2023-06-01' }); valid = r.status === 200; }
             else if (provider === 'openai') { const r = await fetchExternal('https://api.openai.com/v1/models', { 'Authorization': `Bearer ${key}` }); valid = r.status === 200; }
+            else if (provider === 'lmstudio') {
+                try {
+                    const cleanBaseUrl = String(baseUrl || 'http://localhost:1234/v1').replace(/\/+$/, '');
+                    const r = await fetchExternal(`${cleanBaseUrl}/models`, { 'Authorization': 'Bearer lm-studio' });
+                    valid = r.status === 200;
+                } catch {
+                    valid = false;
+                }
+            }
+            else if (provider === 'custom-openai') {
+                if (baseUrl) {
+                    try {
+                        const cleanBaseUrl = String(baseUrl).replace(/\/+$/, '');
+                        const r = await fetchExternal(`${cleanBaseUrl}/models`, { 'Authorization': `Bearer ${key || 'not-needed'}` });
+                        valid = r.status === 200;
+                    } catch {
+                        valid = false;
+                    }
+                }
+            }
             else if (provider === 'ollama') {
                 try { const r = await fetchExternal('http://127.0.0.1:11434/api/tags'); valid = r.status === 200; } catch { valid = false; }
             }

@@ -12,14 +12,19 @@ ENGINE_DIR="$ROOT_DIR/engine"
 DATA_DIR="$ROOT_DIR/data"
 ENV_FILE="$DATA_DIR/ai_settings.env"
 NODE_VERSION="22.14.0"
+NODE_DOWNLOAD_LOG="$ENGINE_DIR/node-download.log"
+NPM_CACHE_DIR="$DATA_DIR/npm-cache"
+NPM_INSTALL_LOG="$ENGINE_DIR/openclaude-engine-install.log"
 
 OS_NAME=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
 
 if [ "$OS_NAME" = "darwin" ]; then
     PLATFORM="darwin"
+    NODE_ARCHIVE_EXT="tar.gz"
 elif [ "$OS_NAME" = "linux" ]; then
     PLATFORM="linux"
+    NODE_ARCHIVE_EXT="tar.xz"
 else
     echo -e "${RED}[ERROR] Unsupported OS: $OS_NAME${RESET}"
     exit 1
@@ -53,21 +58,35 @@ install_engine() {
     local action="$1"
     echo -e "${YELLOW}[~] ${action} OpenClaude Engine...${RESET}"
     echo -e "${DIM}    This can take several minutes on slower USB drives or networks.${RESET}"
+    echo -e "${DIM}    Log: $NPM_INSTALL_LOG${RESET}"
+    echo -e "${DIM}    Tip: USB 2.0 drives can look idle while npm writes many small files.${RESET}"
     cd "$ENGINE_DIR" || exit 1
-    "$NPM_BIN" install @gitlawb/openclaude@latest --no-audit --no-fund --loglevel=warn --no-bin-links &
+    mkdir -p "$NPM_CACHE_DIR"
+    : > "$NPM_INSTALL_LOG"
+    echo "[$(date)] Starting npm install @gitlawb/openclaude@latest" >> "$NPM_INSTALL_LOG"
+    NPM_CONFIG_CACHE="$NPM_CACHE_DIR" "$NPM_BIN" install @gitlawb/openclaude@latest --no-audit --no-fund --loglevel=warn --no-bin-links --cache "$NPM_CACHE_DIR" >> "$NPM_INSTALL_LOG" 2>&1 &
     local npm_pid=$!
     local elapsed=0
+    local last_size=0
     while kill -0 "$npm_pid" 2>/dev/null; do
-        sleep 1
-        elapsed=$((elapsed + 1))
-        if [ $((elapsed % 15)) -eq 0 ] && kill -0 "$npm_pid" 2>/dev/null; then
-            echo -e "${DIM}    Still working... npm install has been running for ${elapsed}s.${RESET}"
+        sleep 10
+        elapsed=$((elapsed + 10))
+        local size=0
+        [ -f "$NPM_INSTALL_LOG" ] && size=$(wc -c < "$NPM_INSTALL_LOG" | tr -d ' ')
+        local activity="waiting for npm output"
+        if [ "$size" -gt "$last_size" ]; then
+            activity="log updated"
         fi
+        last_size="$size"
+        echo -e "${DIM}    Still installing OpenClaude Engine... ${elapsed}s elapsed (${activity}). Log: $NPM_INSTALL_LOG${RESET}"
     done
     wait "$npm_pid"
     local npm_status=$?
+    echo "[$(date)] npm exited with code $npm_status" >> "$NPM_INSTALL_LOG"
     if [ $npm_status -ne 0 ]; then
         echo -e "${RED}[ERROR] OpenClaude Engine install failed (npm exit $npm_status).${RESET}"
+        echo -e "${DIM}        Check log: $NPM_INSTALL_LOG${RESET}"
+        echo -e "${DIM}        If this only fails on USB, try a USB 3.x port/drive or copy the folder to internal storage for the first install, then copy it back.${RESET}"
         exit 1
     fi
     if ! engine_ready; then
@@ -78,20 +97,56 @@ install_engine() {
     echo -e "${GREEN}[OK] Engine installed!${RESET}"
 }
 
+download_node_archive() {
+    local url="$1"
+    local source_name="$2"
+    echo -e "${YELLOW}[~] Downloading Node.js from ${source_name}...${RESET}"
+    echo "[$(date)] Trying ${source_name}: ${url}" >> "$NODE_DOWNLOAD_LOG"
+    if curl --fail --location --retry 3 --retry-delay 3 --connect-timeout 20 "$url" -o "$TEMP_TAR" >> "$NODE_DOWNLOAD_LOG" 2>&1; then
+        if [ -s "$TEMP_TAR" ]; then
+            echo "[$(date)] Downloaded $(wc -c < "$TEMP_TAR" | tr -d ' ') bytes from ${source_name}." >> "$NODE_DOWNLOAD_LOG"
+            return 0
+        fi
+        echo "[$(date)] Download command finished but archive is empty." >> "$NODE_DOWNLOAD_LOG"
+    else
+        echo "[$(date)] Failed: ${source_name}" >> "$NODE_DOWNLOAD_LOG"
+    fi
+    rm -f "$TEMP_TAR"
+    return 1
+}
+
+node_download_failed() {
+    echo ""
+    echo -e "${RED}[ERROR] Automatic Node.js download failed.${RESET}"
+    echo ""
+    echo "Please install Node.js manually:"
+    echo -e "${CYAN}https://nodejs.org/en/download${RESET}"
+    echo ""
+    echo "Then restart OpenClaude Portable."
+    echo "Download log: $NODE_DOWNLOAD_LOG"
+    echo ""
+    echo "Common causes: temporary CDN/network failure, antivirus or firewall blocking curl,"
+    echo "TLS/certificate issues, or a restricted corporate network."
+    exit 1
+}
+
 if [ ! -f "$NODE_BIN" ]; then
     echo -e "${YELLOW}[~] Node.js not found for $PLATFORM-$NODE_ARCH. Downloading...${RESET}"
-    NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-${PLATFORM}-${NODE_ARCH}.tar.gz"
-    TEMP_TAR="$ENGINE_DIR/node.tar.gz"
-    curl -L "$NODE_URL" -o "$TEMP_TAR"
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}[ERROR] Failed to download Node.js!${RESET}"
-        exit 1
+    NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-${PLATFORM}-${NODE_ARCH}.${NODE_ARCHIVE_EXT}"
+    NODE_FALLBACK_URL="https://r2.nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-${PLATFORM}-${NODE_ARCH}.${NODE_ARCHIVE_EXT}"
+    TEMP_TAR="$ENGINE_DIR/node.${NODE_ARCHIVE_EXT}"
+    rm -f "$TEMP_TAR" "$NODE_DOWNLOAD_LOG"
+    echo -e "${DIM}    Version: v${NODE_VERSION}${RESET}"
+    echo -e "${DIM}    Download log: ${NODE_DOWNLOAD_LOG}${RESET}"
+    if ! download_node_archive "$NODE_URL" "official Node.js CDN"; then
+        echo -e "${YELLOW}[WARN] Official Node.js download failed. Trying fallback mirror...${RESET}"
+        download_node_archive "$NODE_FALLBACK_URL" "fallback Node.js mirror" || node_download_failed
     fi
     echo -e "${YELLOW}[~] Extracting Node.js...${RESET}"
     echo -e "${DIM}    This can be silent for a few minutes on external drives.${RESET}"
     rm -rf "$NODE_DIR"
     mkdir -p "$NODE_DIR"
-    tar -xzf "$TEMP_TAR" -C "$NODE_DIR" --strip-components=1
+    tar -xf "$TEMP_TAR" -C "$NODE_DIR" --strip-components=1
     if [ $? -ne 0 ]; then
         echo -e "${RED}[ERROR] Failed to extract Node.js!${RESET}"
         rm -f "$TEMP_TAR"
@@ -113,9 +168,14 @@ fi
 
 # Portable data
 export CLAUDE_CONFIG_DIR="$DATA_DIR/openclaude"
+export HOME="$DATA_DIR/home"
+export USERPROFILE="$HOME"
+export APPDATA="$DATA_DIR/app_data"
+export LOCALAPPDATA="$DATA_DIR/local_app_data"
 export XDG_CONFIG_HOME="$DATA_DIR/config"
 export XDG_DATA_HOME="$DATA_DIR/app_data"
-mkdir -p "$CLAUDE_CONFIG_DIR" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$DATA_DIR"
+export XDG_CACHE_HOME="$DATA_DIR/cache"
+mkdir -p "$CLAUDE_CONFIG_DIR" "$HOME" "$APPDATA" "$LOCALAPPDATA" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME" "$DATA_DIR"
 
 # Banner
 echo ""
@@ -188,10 +248,12 @@ setup_provider() {
     echo -e "  ${CYAN}5)${RESET} ${BOLD}Claude${RESET}       ${DIM}- Anthropic API${RESET}"
     echo -e "  ${CYAN}6)${RESET} ${BOLD}OpenAI${RESET}       ${DIM}- GPT / Codex API${RESET}"
     echo -e "  ${CYAN}7)${RESET} ${BOLD}Ollama${RESET}       ${DIM}- Local Offline AI (No internet)${RESET}"
+    echo -e "  ${CYAN}8)${RESET} ${BOLD}LM Studio${RESET}    ${DIM}- Local OpenAI-compatible server${RESET}"
+    echo -e "  ${CYAN}9)${RESET} ${BOLD}Custom API${RESET}    ${DIM}- Any OpenAI-compatible provider${RESET}"
     echo ""
 
     while true; do
-        read -p "  Select your provider (1-7): " PROVIDER_SEL
+        read -p "  Select your provider (1-9): " PROVIDER_SEL
         case "$PROVIDER_SEL" in
             1) setup_openrouter; return ;;
             2) setup_nvidia; return ;;
@@ -200,7 +262,9 @@ setup_provider() {
             5) setup_claude; return ;;
             6) setup_openai; return ;;
             7) setup_ollama; return ;;
-            *) echo -e "  ${RED}[ERROR] Invalid selection. Please choose 1-7.${RESET}" ;;
+            8) setup_lmstudio; return ;;
+            9) setup_custom_openai; return ;;
+            *) echo -e "  ${RED}[ERROR] Invalid selection. Please choose 1-9.${RESET}" ;;
         esac
     done
 }
@@ -215,6 +279,8 @@ verify_key() {
         nvidia)     curl -sf -H "Authorization: Bearer $key" https://integrate.api.nvidia.com/v1/models > /dev/null 2>&1 ;;
         deepseek)   curl -sf -H "Authorization: Bearer $key" https://api.deepseek.com/models > /dev/null 2>&1 ;;
         openai)     curl -sf -H "Authorization: Bearer $key" https://api.openai.com/v1/models > /dev/null 2>&1 ;;
+        lmstudio)   curl -sf -H "Authorization: Bearer lm-studio" "${key%/}/models" > /dev/null 2>&1 ;;
+        custom)     return 0 ;;
     esac
 }
 
@@ -279,6 +345,7 @@ AI_PROVIDER=openai
 CLAUDE_CODE_USE_OPENAI=1
 OPENAI_API_KEY=${USER_API_KEY}
 OPENAI_BASE_URL=https://openrouter.ai/api/v1
+OPENAI_API_FORMAT=chat_completions
 OPENAI_MODEL=${USER_MODEL}
 AI_DISPLAY_MODEL=${USER_MODEL}"
 }
@@ -406,6 +473,106 @@ setup_ollama() {
 CLAUDE_CODE_USE_OPENAI=1
 OPENAI_API_KEY=ollama
 OPENAI_BASE_URL=http://localhost:11434/v1
+OPENAI_API_FORMAT=chat_completions
+OPENAI_MODEL=${USER_MODEL}
+AI_DISPLAY_MODEL=${USER_MODEL}"
+}
+
+setup_lmstudio() {
+    echo ""
+    echo -e "  ${CYAN}--- LM STUDIO LOCAL SETUP ---${RESET}"
+    echo ""
+    echo "  Start LM Studio first, load a model, then open Developer > Local Server."
+    echo "  Turn the server on and keep the default OpenAI-compatible URL:"
+    echo -e "  ${GREEN}http://localhost:1234/v1${RESET}"
+    echo ""
+    read -p "  Base URL [http://localhost:1234/v1]: " LM_BASE_URL
+    [ -z "$LM_BASE_URL" ] && LM_BASE_URL="http://localhost:1234/v1"
+    LM_BASE_URL="${LM_BASE_URL%/}"
+    USER_API_KEY="lm-studio"
+
+    if ! verify_key lmstudio "$LM_BASE_URL"; then
+        echo -e "  ${YELLOW}[WARN] Could not reach LM Studio at ${LM_BASE_URL}/models.${RESET}"
+        echo "  Make sure LM Studio is open, a model is loaded, and the local server is running."
+        read -p "  Continue with manual model entry? (y/N): " SAVE_ANYWAY
+        [[ ! "$SAVE_ANYWAY" =~ ^[Yy]$ ]] && setup_lmstudio && return
+    fi
+
+    echo ""
+    echo -e "  ${CYAN}--- LM STUDIO MODELS ---${RESET} ${DIM}(Loaded models from /v1/models)${RESET}"
+    MODELS=$(curl -sf -H "Authorization: Bearer lm-studio" "${LM_BASE_URL}/models" 2>/dev/null | grep -Eo '"id"[[:space:]]*:[[:space:]]*"[^"]*"' | sed -e 's/"id"[[:space:]]*:[[:space:]]*"//g' -e 's/"//g')
+    idx=1
+    while IFS= read -r model; do
+        [ -z "$model" ] && continue
+        echo -e "  ${CYAN}${idx})${RESET} $model"
+        eval "MODEL_${idx}='$model'"
+        idx=$((idx+1))
+    done <<< "$MODELS"
+    echo -e "  ${CYAN}${idx})${RESET} ${DIM}Manual model name...${RESET}"
+    echo ""
+    read -p "  Choose a model (1-$idx) [Enter for 1]: " MODEL_SEL
+    [ -z "$MODEL_SEL" ] && MODEL_SEL=1
+    if [ "$MODEL_SEL" = "$idx" ]; then
+        read -p "  Enter model identifier shown in LM Studio: " USER_MODEL
+    else
+        eval "USER_MODEL=\$MODEL_${MODEL_SEL}"
+    fi
+    [ -z "$USER_MODEL" ] && read -p "  Enter model identifier shown in LM Studio: " USER_MODEL
+
+    save_env "AI_PROVIDER=openai
+CLAUDE_CODE_USE_OPENAI=1
+OPENAI_API_KEY=${USER_API_KEY}
+OPENAI_BASE_URL=${LM_BASE_URL}
+OPENAI_API_FORMAT=chat_completions
+OPENAI_MODEL=${USER_MODEL}
+AI_DISPLAY_MODEL=${USER_MODEL}"
+}
+
+setup_custom_openai() {
+    echo ""
+    echo -e "  ${CYAN}--- CUSTOM OPENAI-COMPATIBLE SETUP ---${RESET}"
+    echo ""
+    echo "  Use this for providers that expose OpenAI-style endpoints like /v1/models and /v1/chat/completions."
+    read -p "  Base URL (example: https://provider.example.com/v1): " CUSTOM_BASE_URL
+    [ -z "$CUSTOM_BASE_URL" ] && echo -e "  ${RED}[ERROR] Base URL cannot be empty!${RESET}" && setup_custom_openai && return
+    CUSTOM_BASE_URL="${CUSTOM_BASE_URL%/}"
+    read -p "  API Key (Enter for none/local): " USER_API_KEY
+    [ -z "$USER_API_KEY" ] && USER_API_KEY="not-needed"
+    USER_API_KEY=$(echo "$USER_API_KEY" | tr -d ' ' | tr -d '\r')
+
+    echo -e "  ${YELLOW}[~] Checking /models endpoint...${RESET}"
+    if ! curl -sf -H "Authorization: Bearer $USER_API_KEY" "${CUSTOM_BASE_URL}/models" > /dev/null 2>&1; then
+        echo -e "  ${YELLOW}[WARN] Could not verify ${CUSTOM_BASE_URL}/models.${RESET}"
+        read -p "  Continue with manual model entry? (y/N): " SAVE_ANYWAY
+        [[ ! "$SAVE_ANYWAY" =~ ^[Yy]$ ]] && setup_custom_openai && return
+    fi
+
+    echo ""
+    echo -e "  ${CYAN}--- CUSTOM MODELS ---${RESET} ${DIM}(Live Fetching...)${RESET}"
+    MODELS=$(curl -sf -H "Authorization: Bearer $USER_API_KEY" "${CUSTOM_BASE_URL}/models" 2>/dev/null | grep -Eo '"id"[[:space:]]*:[[:space:]]*"[^"]*"' | sed -e 's/"id"[[:space:]]*:[[:space:]]*"//g' -e 's/"//g')
+    idx=1
+    while IFS= read -r model; do
+        [ -z "$model" ] && continue
+        echo -e "  ${CYAN}${idx})${RESET} $model"
+        eval "MODEL_${idx}='$model'"
+        idx=$((idx+1))
+    done <<< "$MODELS"
+    echo -e "  ${CYAN}${idx})${RESET} ${DIM}Manual model name...${RESET}"
+    echo ""
+    read -p "  Choose a model (1-$idx) [Enter for manual]: " MODEL_SEL
+    [ -z "$MODEL_SEL" ] && MODEL_SEL="$idx"
+    if [ "$MODEL_SEL" = "$idx" ]; then
+        read -p "  Enter model string: " USER_MODEL
+    else
+        eval "USER_MODEL=\$MODEL_${MODEL_SEL}"
+    fi
+    [ -z "$USER_MODEL" ] && echo -e "  ${RED}[ERROR] Model cannot be empty!${RESET}" && setup_custom_openai && return
+
+    save_env "AI_PROVIDER=openai
+CLAUDE_CODE_USE_OPENAI=1
+OPENAI_API_KEY=${USER_API_KEY}
+OPENAI_BASE_URL=${CUSTOM_BASE_URL}
+OPENAI_API_FORMAT=chat_completions
 OPENAI_MODEL=${USER_MODEL}
 AI_DISPLAY_MODEL=${USER_MODEL}"
 }
@@ -455,6 +622,7 @@ deepseek-v4-pro"
 CLAUDE_CODE_USE_OPENAI=1
 OPENAI_API_KEY=${USER_API_KEY}
 OPENAI_BASE_URL=https://api.deepseek.com
+OPENAI_API_FORMAT=chat_completions
 OPENAI_MODEL=${USER_MODEL}
 AI_DISPLAY_MODEL=${USER_MODEL}"
 }
@@ -479,6 +647,7 @@ setup_openai() {
 CLAUDE_CODE_USE_OPENAI=1
 OPENAI_API_KEY=${USER_API_KEY}
 OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_API_FORMAT=chat_completions
 OPENAI_MODEL=${USER_MODEL}
 AI_DISPLAY_MODEL=${USER_MODEL}"
 }
@@ -533,6 +702,7 @@ setup_nvidia() {
 CLAUDE_CODE_USE_OPENAI=1
 OPENAI_API_KEY=${USER_API_KEY}
 OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1
+OPENAI_API_FORMAT=chat_completions
 OPENAI_MODEL=${USER_MODEL}
 AI_DISPLAY_MODEL=${USER_MODEL}
 CLAUDE_CODE_AGENT_LIST_IN_MESSAGES=false
@@ -556,6 +726,12 @@ if [ "$goto_loaded" -eq 0 ]; then
 fi
 
 # ─── Friendly Provider Name ────────────────────────────────
+if [ "$AI_PROVIDER" = "openai" ] && [ -n "$OPENAI_BASE_URL" ] && [ -z "$OPENAI_API_FORMAT" ]; then
+    export OPENAI_API_FORMAT="chat_completions"
+fi
+export CLAUDE_CODE_PROVIDER_PROFILE_ENV_APPLIED=1
+export CLAUDE_CODE_PROVIDER_PROFILE_ENV_APPLIED_ID=portable-env
+
 PROVIDER_NAME="$AI_PROVIDER"
 case "$AI_PROVIDER" in
     openai)
@@ -564,6 +740,8 @@ case "$AI_PROVIDER" in
         elif [[ "$OPENAI_BASE_URL" == *"api.deepseek.com"* ]]; then PROVIDER_NAME="DeepSeek"
         elif [[ "$OPENAI_BASE_URL" == *"api.openai.com"* ]]; then PROVIDER_NAME="OpenAI"
         elif [[ "$OPENAI_BASE_URL" == *"localhost:11434"* ]]; then PROVIDER_NAME="Ollama"
+        elif [[ "$OPENAI_BASE_URL" == *"localhost:1234"* ]]; then PROVIDER_NAME="LM Studio"
+        else PROVIDER_NAME="Custom OpenAI-Compatible"
         fi ;;
     gemini)     PROVIDER_NAME="Google Gemini" ;;
     anthropic)  PROVIDER_NAME="Anthropic Claude" ;;
@@ -661,22 +839,34 @@ fi
 echo -e "  ${CYAN}[~] Starting AI Engine...${RESET}"
 echo ""
 
-# Map internal provider name to openclaude --provider flag
-PROVIDER_ARGS=""
-if [ -n "$AI_PROVIDER" ]; then
-    OC_PROVIDER="$AI_PROVIDER"
-    # NVIDIA NIM uses openai-compat internally but the engine expects --provider nvidia-nim
-    if [ "$AI_PROVIDER" = "openai" ] && [[ "$OPENAI_BASE_URL" == *"integrate.api.nvidia.com"* ]]; then
-        OC_PROVIDER="nvidia-nim"
-    fi
-    PROVIDER_ARGS="--provider $OC_PROVIDER"
+# Map only native providers to openclaude --provider. OpenAI-compatible
+# endpoints are selected through env vars to avoid Codex profile fallback.
+PROVIDER_ARGS=()
+case "$AI_PROVIDER" in
+    anthropic) PROVIDER_ARGS=(--provider anthropic) ;;
+    gemini) PROVIDER_ARGS=(--provider gemini) ;;
+    ollama) PROVIDER_ARGS=(--provider ollama) ;;
+    openai)
+        if [[ "$OPENAI_BASE_URL" == *"integrate.api.nvidia.com"* ]]; then
+            PROVIDER_ARGS=(--provider nvidia-nim)
+        fi
+        ;;
+esac
+MODEL_ARGS=()
+if [ -n "$OPENAI_MODEL" ]; then
+    MODEL_ARGS=(--model "$OPENAI_MODEL")
+elif [ -n "$GEMINI_MODEL" ]; then
+    MODEL_ARGS=(--model "$GEMINI_MODEL")
+elif [ -n "$ANTHROPIC_MODEL" ]; then
+    MODEL_ARGS=(--model "$ANTHROPIC_MODEL")
 fi
+SETTINGS_ARGS=(--setting-sources local)
 
 cd "$ENGINE_DIR"
 
 # Use portable binary directly (not npx)
 if [ -f "$OC_BIN" ]; then
-    "$NODE_BIN" "$OC_BIN" $PROVIDER_ARGS $CMD_ARGS
+    "$NODE_BIN" "$OC_BIN" "${SETTINGS_ARGS[@]}" "${PROVIDER_ARGS[@]}" "${MODEL_ARGS[@]}" $CMD_ARGS
 else
     echo -e "  ${RED}[ERROR] OpenClaude Engine is missing. Re-run ./start.sh to repair the install.${RESET}"
     exit 1

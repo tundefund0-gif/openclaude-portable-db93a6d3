@@ -28,6 +28,8 @@ verify_key() {
         nvidia)     curl -sf -H "Authorization: Bearer $key" https://integrate.api.nvidia.com/v1/models > /dev/null 2>&1 ;;
         deepseek)   curl -sf -H "Authorization: Bearer $key" https://api.deepseek.com/models > /dev/null 2>&1 ;;
         openai)     curl -sf -H "Authorization: Bearer $key" https://api.openai.com/v1/models > /dev/null 2>&1 ;;
+        lmstudio)   curl -sf -H "Authorization: Bearer lm-studio" "${OPENAI_BASE_URL%/}/models" > /dev/null 2>&1 ;;
+        custom-openai) curl -sf -H "Authorization: Bearer $key" "${OPENAI_BASE_URL%/}/models" > /dev/null 2>&1 ;;
         *)          return 0 ;;
     esac
 }
@@ -68,6 +70,7 @@ EOF
             echo "CLAUDE_CODE_USE_OPENAI=$CLAUDE_CODE_USE_OPENAI" >> "$ENV_FILE"
             echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> "$ENV_FILE"
             echo "OPENAI_BASE_URL=$OPENAI_BASE_URL" >> "$ENV_FILE"
+            echo "OPENAI_API_FORMAT=chat_completions" >> "$ENV_FILE"
             echo "OPENAI_MODEL=$OPENAI_MODEL" >> "$ENV_FILE"
             if [ "$AI_PROVIDER" = "nvidia" ] || [[ "$OPENAI_BASE_URL" == *"nvidia"* ]]; then
                 echo "CLAUDE_CODE_AGENT_LIST_IN_MESSAGES=false" >> "$ENV_FILE"
@@ -87,6 +90,7 @@ EOF
             echo "CLAUDE_CODE_USE_OPENAI=$CLAUDE_CODE_USE_OPENAI" >> "$ENV_FILE"
             echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> "$ENV_FILE"
             echo "OPENAI_BASE_URL=$OPENAI_BASE_URL" >> "$ENV_FILE"
+            echo "OPENAI_API_FORMAT=chat_completions" >> "$ENV_FILE"
             echo "OPENAI_MODEL=$OPENAI_MODEL" >> "$ENV_FILE"
             ;;
     esac
@@ -132,6 +136,12 @@ fetch_gemini_models() {
     echo "$MODELS"
 }
 
+fetch_openai_compatible_models() {
+    echo -e "  ${CYAN}--- OPENAI-COMPATIBLE MODELS ---${RESET} ${DIM}(Live Fetching...)${RESET}"
+    MODELS=$(curl -sf -H "Authorization: Bearer $OPENAI_API_KEY" "${OPENAI_BASE_URL%/}/models" 2>/dev/null | grep -Eo '"id"[[:space:]]*:[[:space:]]*"[^"]*"' | sed -e 's/"id"[[:space:]]*:[[:space:]]*"//g' -e 's/"//g')
+    echo "$MODELS"
+}
+
 
 # ─── Main Logic ─────────────────────────────────────────────
 
@@ -149,6 +159,8 @@ if [ "$AI_PROVIDER" = "openai" ]; then
     if [[ "$OPENAI_BASE_URL" == *"openrouter"* ]]; then PROVIDER_TYPE="openrouter"
     elif [[ "$OPENAI_BASE_URL" == *"integrate.api.nvidia.com"* ]]; then PROVIDER_TYPE="nvidia"
     elif [[ "$OPENAI_BASE_URL" == *"api.deepseek.com"* ]]; then PROVIDER_TYPE="deepseek"
+    elif [[ "$OPENAI_BASE_URL" == *"localhost:1234"* ]]; then PROVIDER_TYPE="lmstudio"
+    elif [[ "$OPENAI_BASE_URL" != *"api.openai.com"* ]]; then PROVIDER_TYPE="custom-openai"
     fi
 fi
 
@@ -261,6 +273,29 @@ case "$OPTION" in
                     fi
                 fi
                 [ -n "$NEW_MODEL" ] && GEMINI_MODEL="$NEW_MODEL" && AI_DISPLAY_MODEL="$NEW_MODEL"
+                ;;
+            lmstudio|custom-openai)
+                MODELS=$(fetch_openai_compatible_models)
+                if [ -z "$MODELS" ]; then
+                    read -p "  Could not fetch models. Enter string manually: " NEW_MODEL
+                else
+                    idx=1
+                    while IFS= read -r model; do
+                        [ -z "$model" ] && continue
+                        echo -e "  ${CYAN}${idx})${RESET} $model"
+                        eval "MODEL_${idx}='$model'"
+                        idx=$((idx+1))
+                    done <<< "$MODELS"
+                    echo -e "  ${CYAN}${idx})${RESET} Custom Model..."
+                    read -p "  Choose a model (1-$idx) [Enter for manual]: " MODEL_SEL
+                    [ -z "$MODEL_SEL" ] && MODEL_SEL="$idx"
+                    if [ "$MODEL_SEL" = "$idx" ]; then
+                        read -p "  Enter custom model string: " NEW_MODEL
+                    else
+                        eval "NEW_MODEL=\$MODEL_${MODEL_SEL}"
+                    fi
+                fi
+                [ -n "$NEW_MODEL" ] && OPENAI_MODEL="$NEW_MODEL" && AI_DISPLAY_MODEL="$NEW_MODEL"
                 ;;
             anthropic|openai|ollama)
                 read -p "  Enter new model string (Current: $AI_DISPLAY_MODEL): " NEW_MODEL

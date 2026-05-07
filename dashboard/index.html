@@ -463,6 +463,8 @@ select{appearance:none;cursor:pointer;background-image:url("data:image/svg+xml,%
               <div class="provider-option" data-provider="gemini" onclick="selectProvider(this)"><div class="icon">💎</div><div class="name">Gemini</div><div class="desc">Google API</div></div>
               <div class="provider-option" data-provider="anthropic" onclick="selectProvider(this)"><div class="icon">🧠</div><div class="name">Claude</div><div class="desc">Anthropic API</div></div>
               <div class="provider-option" data-provider="ollama" onclick="selectProvider(this)"><div class="icon">🖥️</div><div class="name">Ollama</div><div class="desc">Local</div></div>
+              <div class="provider-option" data-provider="lmstudio" onclick="selectProvider(this)"><div class="icon">LM</div><div class="name">LM Studio</div><div class="desc">Local server</div></div>
+              <div class="provider-option" data-provider="custom-openai" onclick="selectProvider(this)"><div class="icon">API</div><div class="name">Custom API</div><div class="desc">OpenAI compat</div></div>
               <div class="provider-option" data-provider="openai" onclick="selectProvider(this)"><div class="icon">⚡</div><div class="name">OpenAI</div><div class="desc">GPT / Codex</div></div>
             </div>
             <div class="btn-group"><button class="btn btn-primary" id="btnNext1" disabled onclick="goStep(2)">Continue</button></div>
@@ -471,7 +473,9 @@ select{appearance:none;cursor:pointer;background-image:url("data:image/svg+xml,%
 
         <div class="section" id="sec2">
           <div class="card">
-            <h2>Enter API Key</h2><p class="subtitle">Paste your provider API key below</p>
+            <h2 id="keyStepTitle">Enter API Key</h2><p class="subtitle" id="keyStepSubtitle">Paste your provider API key below</p>
+            <div id="baseUrlWrap" class="form-row" style="display:none"><label>Base URL</label><input type="text" id="baseUrl" placeholder="https://provider.example.com/v1" autocomplete="off"></div>
+            <div id="providerGuide" style="display:none;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:12px;font-size:0.78rem;color:var(--text2);line-height:1.55"></div>
             <div class="form-row"><label>API Key</label><input type="password" id="apiKey" placeholder="sk-..." autocomplete="off"></div>
             <div id="keyStatus" style="margin-top:8px;font-size:0.78rem;display:flex;align-items:center;gap:8px"></div>
             <div class="btn-group">
@@ -602,15 +606,15 @@ let currentChatId = null;
 let chatMessages = [];
 let isStreaming = false;
 let allModels = [];
-let setupState = { provider:'', key:'', model:'', tier:'free' };
+let setupState = { provider:'', key:'', model:'', tier:'free', baseUrl:'' };
 let streamController = null;
 let userScrolled = false;
 let currentMode = 'normal';
 let modeLocked = false;
 let agentMode = false;
 let workDir = '';
-const defaults = { gemini:'gemini-2.0-pro-exp-02-05', anthropic:'claude-3-7-sonnet-20250219', ollama:'llama3.2:3b', openai:'gpt-4o', nvidia:'meta/llama-3.1-70b-instruct', deepseek:'deepseek-v4-flash' };
-const providerNames = { openrouter:'OpenRouter', gemini:'Gemini', anthropic:'Claude', ollama:'Ollama', openai:'OpenAI', nvidia:'NVIDIA NIM', deepseek:'DeepSeek' };
+const defaults = { gemini:'gemini-2.0-pro-exp-02-05', anthropic:'claude-3-7-sonnet-20250219', ollama:'llama3.2:3b', openai:'gpt-4o', nvidia:'meta/llama-3.1-70b-instruct', deepseek:'deepseek-v4-flash', lmstudio:'', 'custom-openai':'' };
+const providerNames = { openrouter:'OpenRouter', gemini:'Gemini', anthropic:'Claude', ollama:'Ollama', openai:'OpenAI', nvidia:'NVIDIA NIM', deepseek:'DeepSeek', lmstudio:'LM Studio', 'custom-openai':'Custom OpenAI-Compatible' };
 
 // ─── Init ────────────────────────────────────────────────────
 (async function init() {
@@ -637,6 +641,8 @@ async function loadConfig() {
     const pName = cfg.AI_PROVIDER === 'openai' && cfg.OPENAI_BASE_URL?.includes('openrouter') ? 'OpenRouter' :
                   cfg.AI_PROVIDER === 'openai' && cfg.OPENAI_BASE_URL?.includes('integrate.api.nvidia.com') ? 'NVIDIA NIM' :
                   cfg.AI_PROVIDER === 'openai' && cfg.OPENAI_BASE_URL?.includes('api.deepseek.com') ? 'DeepSeek' :
+                  cfg.AI_PROVIDER === 'openai' && cfg.OPENAI_BASE_URL?.includes('localhost:1234') ? 'LM Studio' :
+                  cfg.AI_PROVIDER === 'openai' && cfg.OPENAI_BASE_URL && !cfg.OPENAI_BASE_URL.includes('api.openai.com') ? 'Custom OpenAI-Compatible' :
                   cfg.AI_PROVIDER === 'ollama' ? 'Local AI' :
                   providerNames[cfg.AI_PROVIDER] || cfg.AI_PROVIDER || '—';
     const model = cfg.AI_DISPLAY_MODEL || cfg.OPENAI_MODEL || '—';
@@ -1297,7 +1303,33 @@ function selectProvider(el) {
   document.querySelectorAll('.provider-option').forEach(o => o.classList.remove('active'));
   el.classList.add('active');
   setupState.provider = el.dataset.provider;
+  setupState.key = '';
+  setupState.model = '';
+  setupState.baseUrl = setupState.provider === 'lmstudio' ? 'http://localhost:1234/v1' : '';
   document.getElementById('btnNext1').disabled = false;
+}
+
+function prepareKeyStep(){
+  const p=setupState.provider;
+  const isLM=p==='lmstudio';
+  const isCustom=p==='custom-openai';
+  const title=document.getElementById('keyStepTitle');
+  const sub=document.getElementById('keyStepSubtitle');
+  const guide=document.getElementById('providerGuide');
+  const baseWrap=document.getElementById('baseUrlWrap');
+  const apiKey=document.getElementById('apiKey');
+  const baseUrl=document.getElementById('baseUrl');
+  document.getElementById('keyStatus').innerHTML='';
+  baseWrap.style.display=(isLM||isCustom)?'':'none';
+  guide.style.display=(isLM||isCustom)?'':'none';
+  apiKey.parentElement.style.display=isLM?'none':'';
+  apiKey.placeholder=isCustom?'Optional for local providers':'sk-...';
+  baseUrl.value=isLM?'http://localhost:1234/v1':(setupState.baseUrl||'');
+  title.textContent=isLM?'Connect LM Studio':isCustom?'Connect Custom API':'Enter API Key';
+  sub.textContent=isLM?'LM Studio must be running before verification':isCustom?'Enter your OpenAI-compatible endpoint details':'Paste your provider API key below';
+  guide.innerHTML=isLM
+    ? 'In LM Studio, load a model, open <strong>Developer &gt; Local Server</strong>, then start the server. The default OpenAI-compatible base URL is <strong>http://localhost:1234/v1</strong>.'
+    : 'Use the provider base URL that already includes <strong>/v1</strong>. This setup checks <strong>/models</strong> and then uses the same URL for chat requests.';
 }
 
 function goStep(n) {
@@ -1309,22 +1341,32 @@ function goStep(n) {
     if(i===n)s.classList.add('active');
   }
   if(n===2&&setupState.provider==='ollama')goStep(3);
+  if(n===2)prepareKeyStep();
   if(n===3)initModelStep();
   if(n===4)initConfirmStep();
 }
 
 async function verifyKey() {
-  const key=document.getElementById('apiKey').value.trim();
+  const isLM=setupState.provider==='lmstudio';
+  const isCustom=setupState.provider==='custom-openai';
+  const key=isLM?'lm-studio':(document.getElementById('apiKey').value.trim()||(isCustom?'not-needed':''));
+  const baseUrl=(document.getElementById('baseUrl')?.value||'').trim().replace(/\/+$/,'');
+  if((isLM||isCustom)&&!baseUrl){showKeyStatus('Base URL cannot be empty','error');return;}
   if(!key){showKeyStatus('API key cannot be empty','error');return;}
   setupState.key=key;
+  setupState.baseUrl=baseUrl;
   showKeyStatus('<div class="spinner"></div> Verifying...','loading');
   document.getElementById('btnVerify').disabled=true;
   try{
-    const res=await fetch(`${API}/api/verify-key`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:setupState.provider,key})});
+    const res=await fetch(`${API}/api/verify-key`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:setupState.provider,key,baseUrl})});
     const d=await res.json();
     if(d.valid){showKeyStatus('✓ Verified','success');setTimeout(()=>goStep(3),600);}
+    else if(isCustom){showKeyStatus('Could not verify /models. You can still enter the model manually.','error');setTimeout(()=>goStep(3),900);}
     else showKeyStatus('✗ Invalid or expired API key','error');
-  }catch{showKeyStatus('✗ Verification failed','error');}
+  }catch{
+    if(isCustom){showKeyStatus('Verification failed. You can still enter the model manually.','error');setTimeout(()=>goStep(3),900);}
+    else showKeyStatus('✗ Verification failed','error');
+  }
   document.getElementById('btnVerify').disabled=false;
 }
 
@@ -1339,14 +1381,16 @@ async function initModelStep(){
   const isOllama=setupState.provider==='ollama';
   const isNvidia=setupState.provider==='nvidia';
   const isDeepSeek=setupState.provider==='deepseek';
+  const isOpenAICompat=setupState.provider==='lmstudio'||setupState.provider==='custom-openai';
   document.getElementById('tierToggle').style.display=isOR?'':'none';
-  document.getElementById('modelSearchWrap').style.display=(isOR||isOllama||isNvidia||isDeepSeek)?'':'none';
+  document.getElementById('modelSearchWrap').style.display=(isOR||isOllama||isNvidia||isDeepSeek||isOpenAICompat)?'':'none';
   document.getElementById('modelSearch').style.display=isOllama?'none':'';
   document.getElementById('manualModelWrap').style.display=''; // Always show custom input
   if(isOR) fetchModels(setupState.tier);
   else if(isOllama) await fetchOllamaModels();
   else if(isNvidia) await fetchNvidiaModels();
   else if(isDeepSeek) await fetchDeepSeekModels();
+  else if(isOpenAICompat) await fetchOpenAICompatibleModels();
   else { document.getElementById('manualModel').placeholder=`Default: ${defaults[setupState.provider]||''}`; }
 }
 
@@ -1407,6 +1451,23 @@ async function fetchDeepSeekModels() {
   loadEl.style.display='none';
 }
 
+async function fetchOpenAICompatibleModels() {
+  const listEl=document.getElementById('modelList');
+  const loadEl=document.getElementById('modelLoading');
+  listEl.innerHTML='';loadEl.style.display='flex';
+  try{
+    const res=await fetch(`${API}/api/openai-compatible/models`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({baseUrl:setupState.baseUrl,key:setupState.key})});
+    const d=await res.json();
+    allModels=d.models||[];
+    if(allModels.length) renderModels(allModels);
+    else listEl.innerHTML='<div style="padding:14px;color:var(--text2);font-size:0.8rem">No models returned. Enter the model name manually below.</div>';
+  }catch{
+    allModels=[];
+    listEl.innerHTML='<div style="padding:14px;color:var(--text2);font-size:0.8rem">Failed to load models. Enter the model name manually below.</div>';
+  }
+  loadEl.style.display='none';
+}
+
 async function fetchModels(tier){
   const listEl=document.getElementById('modelList');
   const loadEl=document.getElementById('modelLoading');
@@ -1443,6 +1504,8 @@ async function saveConfig(){
   if(setupState.provider==='openrouter')config={AI_PROVIDER:'openai',CLAUDE_CODE_USE_OPENAI:'1',OPENAI_API_KEY:setupState.key,OPENAI_BASE_URL:'https://openrouter.ai/api/v1',OPENAI_MODEL:setupState.model,AI_DISPLAY_MODEL:setupState.model};
   else if(setupState.provider==='nvidia')config={AI_PROVIDER:'openai',CLAUDE_CODE_USE_OPENAI:'1',OPENAI_API_KEY:setupState.key,OPENAI_BASE_URL:'https://integrate.api.nvidia.com/v1',OPENAI_MODEL:setupState.model,AI_DISPLAY_MODEL:setupState.model};
   else if(setupState.provider==='deepseek')config={AI_PROVIDER:'openai',CLAUDE_CODE_USE_OPENAI:'1',OPENAI_API_KEY:setupState.key,OPENAI_BASE_URL:'https://api.deepseek.com',OPENAI_MODEL:setupState.model,AI_DISPLAY_MODEL:setupState.model};
+  else if(setupState.provider==='lmstudio')config={AI_PROVIDER:'openai',CLAUDE_CODE_USE_OPENAI:'1',OPENAI_API_KEY:'lm-studio',OPENAI_BASE_URL:setupState.baseUrl||'http://localhost:1234/v1',OPENAI_MODEL:setupState.model,AI_DISPLAY_MODEL:setupState.model};
+  else if(setupState.provider==='custom-openai')config={AI_PROVIDER:'openai',CLAUDE_CODE_USE_OPENAI:'1',OPENAI_API_KEY:setupState.key||'not-needed',OPENAI_BASE_URL:setupState.baseUrl,OPENAI_MODEL:setupState.model,AI_DISPLAY_MODEL:setupState.model};
   else if(setupState.provider==='gemini')config={AI_PROVIDER:'gemini',GEMINI_API_KEY:setupState.key,AI_DISPLAY_MODEL:setupState.model};
   else if(setupState.provider==='anthropic')config={AI_PROVIDER:'anthropic',ANTHROPIC_API_KEY:setupState.key,AI_DISPLAY_MODEL:setupState.model};
   else if(setupState.provider==='ollama')config={AI_PROVIDER:'ollama',CLAUDE_CODE_USE_OPENAI:'1',OPENAI_API_KEY:'ollama',OPENAI_BASE_URL:'http://localhost:11434/v1',OPENAI_MODEL:setupState.model,AI_DISPLAY_MODEL:setupState.model};
