@@ -1,7 +1,8 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════
-#  OpenClaude Portable - Change Model/Provider (All Platforms)
+#  OpenClaude Portable - Change Provider (All Platforms)
 # ═══════════════════════════════════════════════════════════
+#  Runs on macOS, Linux, and Termux (Android).
 
 CYAN='\033[36m'; GREEN='\033[32m'; YELLOW='\033[33m'; RED='\033[31m'
 DIM='\033[90m'; BOLD='\033[1m'; RESET='\033[0m'
