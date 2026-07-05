@@ -48,7 +48,7 @@ On first run it automatically downloads Node.js (~25 MB) and the OpenClaude engi
 
 ### Linux / macOS
 ```bash
-chmod +x start.sh
+chmod +x start.sh tools/*.sh
 ./start.sh
 ```
 
