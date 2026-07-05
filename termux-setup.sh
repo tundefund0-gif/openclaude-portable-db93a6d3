@@ -1,7 +1,12 @@
 #!/bin/bash
 # =================================================================
-#  OpenClaude Portable - Termux One-Liner Setup
-#  Usage: curl -sSL https://raw.githubusercontent.com/tundefund0-gif/openclaude-portable-db93a6d3/main/termux-setup.sh | bash
+#  OpenClaude Portable - Termux Setup Script
+#  Run directly after cloning:
+#    git clone --depth=1 https://github.com/tundefund0-gif/openclaude-portable-db93a6d3.git ~/openclaude-portable
+#    cd ~/openclaude-portable && bash termux-setup.sh
+#
+#  One-liner:
+#    git clone --depth=1 https://github.com/tundefund0-gif/openclaude-portable-db93a6d3.git ~/openclaude-portable && bash ~/openclaude-portable/termux-setup.sh
 # =================================================================
 set -e
 
@@ -35,28 +40,17 @@ pkg install -y nodejs curl git -qq 2>/dev/null || pkg install -y nodejs curl git
 
 echo -e "${GREEN}[OK] Dependencies installed!${RESET}"
 
-# --- Clone repo if not already present ---
+# --- Ensure we're in the repo directory ---
 SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
-REPO_URL="https://github.com/tundefund0-gif/openclaude-portable-db93a6d3.git"
-CLONE_DIR="openclaude-portable"
-if [ -f "$SCRIPT_DIR/start.sh" ] && [ "$SCRIPT_DIR" != "/dev/fd" ] && [ "$SCRIPT_DIR" != "/proc" ] && [[ "$SCRIPT_DIR" != /proc/* ]]; then
-    cd "$SCRIPT_DIR"
-else
-    echo -e "${YELLOW}[~] Cloning OpenClaude Portable...${RESET}"
-    cd "$HOME"
-    # Clean up any stale directories from previous runs
-    rm -rf "$CLONE_DIR" "OpenClaude-Portable" "openclaude-portable-db93a6d3"
-    git clone --depth=1 "$REPO_URL" "$CLONE_DIR"
-    cd "$CLONE_DIR"
-    chmod +x start.sh
-    echo -e "${GREEN}[OK] Repository cloned!${RESET}"
-fi
+cd "$SCRIPT_DIR"
+chmod +x start.sh 2>/dev/null || true
 
 echo ""
 echo -e "${GREEN}=========================================================${RESET}"
 echo -e "  ${BOLD}Setup complete! Run ./start.sh to launch.${RESET}"
 echo -e "${GREEN}=========================================================${RESET}"
 echo ""
-echo -e "  ${CYAN}Quick start:${RESET} cd ~/openclaude-portable && ./start.sh"
-echo -e "  ${CYAN}One-liner (next time):${RESET} bash ~/openclaude-portable/termux-setup.sh"
+echo -e "  ${CYAN}Quick start:${RESET} ./start.sh"
+echo -e "  ${CYAN}One-liner (next time):${RESET}"
+echo -e "    git clone --depth=1 https://github.com/tundefund0-gif/openclaude-portable-db93a6d3.git ~/openclaude-portable && bash ~/openclaude-portable/termux-setup.sh"
 echo ""
