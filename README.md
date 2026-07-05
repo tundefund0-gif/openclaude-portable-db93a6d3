@@ -4,7 +4,8 @@
 > Plug in. Launch. Code. Take it anywhere.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Android(Termux)-lightgrey.svg)]()
+[![Termux](https://img.shields.io/badge/Termux-One--liner-green?logo=android)]()
 
 
 **🎥 Watch the Setup & Demo Video:** [https://youtu.be/9Dh3kKWFFjg](https://youtu.be/9Dh3kKWFFjg)
@@ -26,13 +27,14 @@ Everything runs strictly inside the project folder. No files are written to the 
 | Feature | Details |
 |---|---|
 | **9 AI Providers** | NVIDIA NIM · DeepSeek · OpenRouter · Google Gemini · Anthropic Claude · OpenAI · Ollama (offline) · LM Studio · Custom OpenAI-compatible API |
+| **Termux Support** | Android one-liner setup — full AI coding agent on your phone |
 | **Zero Footprint** | All data, keys, and logs stay inside `data/` — nothing touches the host system |
 | **Local Speed Proxy** | Trims system prompts by up to 90% before sending to Ollama, dramatically improving response time on CPU-only hardware |
 | **Auto-Update Cache** | Checks for engine updates once per day (skips the network call on repeat launches) |
 | **Session Resume** | Resume any interrupted session with `RESUME.bat <session-id>` |
 | **Web Dashboard** | ChatGPT-style browser UI with agent mode, tool cards, and thinking visualisation |
 | **Limitless Mode** | Optional full-autonomy mode — the agent runs without asking for approval |
-| **Cross-Platform** | Shared `data/` folder works across Windows, Linux, and macOS |
+| **Cross-Platform** | Shared `data/` folder works across Windows, Linux, macOS, and Android (Termux) |
 
 ---
 
@@ -50,6 +52,25 @@ chmod +x start.sh
 ./start.sh
 ```
 
+### Termux (Android)
+**One-liner setup**
+```bash
+curl -sSL https://raw.githubusercontent.com/techjarves/OpenClaude-Portable/main/termux-setup.sh | bash
+```
+This will install Node.js, clone the repo, and prepare everything. Then just run:
+```bash
+cd OpenClaude-Portable && ./start.sh
+```
+
+Or manually:
+```bash
+pkg install -y nodejs curl git
+git clone --depth=1 https://github.com/techjarves/OpenClaude-Portable.git
+cd OpenClaude-Portable
+chmod +x start.sh
+./start.sh
+```
+
 > **First-time setup requires internet.** After that, only API calls need a connection (or none at all if you use Ollama offline mode).
 
 ---
@@ -60,7 +81,8 @@ chmod +x start.sh
 OpenClaude-Multi-Platform/
 │
 ├── START.bat                  Windows entry point — handles everything
-├── start.sh                   Linux/macOS entry point
+├── start.sh                   Linux/macOS/Termux entry point
+├── termux-setup.sh            Termux (Android) one-liner setup
 ├── RESUME.bat                 Resume a previous session by ID (Windows)
 │
 ├── data/                      All persistent data (shared across platforms)
@@ -93,7 +115,7 @@ OpenClaude-Multi-Platform/
 
 ## Main Menu Options
 
-When you run `START.bat`, you are presented with:
+When you run `START.bat` (Windows) or `./start.sh` (Linux/macOS/Termux), you are presented with:
 
 ```
 1) Launch AI       — Normal Mode      (asks before writing files or running commands)
@@ -180,10 +202,11 @@ Proxy activity is logged silently to `data/proxy.log` — it never writes to the
 ## System Requirements
 
 | Platform | Requirement |
-|---|---|
+|---|---|---|
 | **Windows** | Windows 10 or later — Node.js is bundled, nothing else needed |
 | **Linux** | `curl` (pre-installed on most distros) |
 | **macOS** | `curl` (pre-installed) |
+| **Termux (Android)** | `pkg install -y nodejs curl git` or use the one-liner |
 
 **Disk space:** ~150 MB for Node.js + engine. Local Ollama models require additional space (800 MB–8 GB depending on model).
 
@@ -205,6 +228,9 @@ Proxy activity is logged silently to `data/proxy.log` — it never writes to the
 | API key rejected | Verify your key at the provider's website; re-run option 4 to update it |
 | Port 3000 already in use | The dashboard is already running — open `http://localhost:3000` directly |
 | `openclaude` not found in PowerShell | Use `.\RESUME.bat <session-id>` instead of calling `openclaude` directly |
+| `pkg: command not found` | You're not running this in Termux. Install Termux from F-Droid or Google Play |
+| `Node.js not found` on Termux | Run `pkg install -y nodejs` or use the one-liner: `bash termux-setup.sh` |
+| Engine install fails on Termux | Make sure you have enough free storage. Run `pkg install -y nodejs git curl` first |
 
 ---
 

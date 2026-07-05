@@ -19,31 +19,49 @@ NPM_INSTALL_LOG="$ENGINE_DIR/openclaude-engine-install.log"
 OS_NAME=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
 
-if [ "$OS_NAME" = "darwin" ]; then
-    PLATFORM="darwin"
-    NODE_ARCHIVE_EXT="tar.gz"
-elif [ "$OS_NAME" = "linux" ]; then
+# ─── Termux Detection ──────────────────────────────────────
+TERMUX_MODE=0
+if [ -n "$PREFIX" ] && [ -d "$PREFIX" ]; then
+    TERMUX_MODE=1
+elif [ "$OS_NAME" = "linux" ] && echo "$HOME" | grep -q "com.termux"; then
+    TERMUX_MODE=1
+fi
+
+if [ "$TERMUX_MODE" -eq 1 ]; then
     PLATFORM="linux"
     NODE_ARCHIVE_EXT="tar.xz"
-else
-    echo -e "${RED}[ERROR] Unsupported OS: $OS_NAME${RESET}"
-    exit 1
-fi
-
-if [ "$ARCH" = "x86_64" ] || [ "$ARCH" = "amd64" ]; then
-    NODE_ARCH="x64"
-elif [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
     NODE_ARCH="arm64"
+    NODE_BIN="$(which node 2>/dev/null || echo '')"
+    NPM_BIN="$(which npm 2>/dev/null || echo '')"
+    NPX_BIN="$(which npx 2>/dev/null || echo '')"
+    echo -e "${GREEN}[OK] Termux detected - using system Node.js${RESET}"
 else
-    echo -e "${RED}[ERROR] Unsupported Architecture: $ARCH${RESET}"
-    exit 1
-fi
+    if [ "$OS_NAME" = "darwin" ]; then
+        PLATFORM="darwin"
+        NODE_ARCHIVE_EXT="tar.gz"
+    elif [ "$OS_NAME" = "linux" ]; then
+        PLATFORM="linux"
+        NODE_ARCHIVE_EXT="tar.xz"
+    else
+        echo -e "${RED}[ERROR] Unsupported OS: $OS_NAME${RESET}"
+        exit 1
+    fi
 
-NODE_DIR_NAME="node-$PLATFORM-$NODE_ARCH"
-NODE_DIR="$ENGINE_DIR/$NODE_DIR_NAME"
-NODE_BIN="$NODE_DIR/bin/node"
-NPM_BIN="$NODE_DIR/bin/npm"
-NPX_BIN="$NODE_DIR/bin/npx"
+    if [ "$ARCH" = "x86_64" ] || [ "$ARCH" = "amd64" ]; then
+        NODE_ARCH="x64"
+    elif [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
+        NODE_ARCH="arm64"
+    else
+        echo -e "${RED}[ERROR] Unsupported Architecture: $ARCH${RESET}"
+        exit 1
+    fi
+
+    NODE_DIR_NAME="node-$PLATFORM-$NODE_ARCH"
+    NODE_DIR="$ENGINE_DIR/$NODE_DIR_NAME"
+    NODE_BIN="$NODE_DIR/bin/node"
+    NPM_BIN="$NODE_DIR/bin/npm"
+    NPX_BIN="$NODE_DIR/bin/npx"
+fi
 OPENCLAUDE_DIR="$ENGINE_DIR/node_modules/@gitlawb/openclaude"
 OC_BIN="$OPENCLAUDE_DIR/bin/openclaude"
 OC_CLI="$OPENCLAUDE_DIR/dist/cli.mjs"
@@ -130,7 +148,14 @@ node_download_failed() {
     exit 1
 }
 
-if [ ! -f "$NODE_BIN" ]; then
+if [ "$TERMUX_MODE" -eq 1 ]; then
+    if [ -z "$NODE_BIN" ] || ! "$NODE_BIN" --version >/dev/null 2>&1; then
+        echo -e "${RED}[ERROR] Node.js not found! Run: pkg install nodejs${RESET}"
+        echo -e "${CYAN}  pkg install -y nodejs${RESET}"
+        exit 1
+    fi
+    echo -e "${GREEN}[OK] Using system Node.js: $($NODE_BIN --version)${RESET}"
+elif [ ! -f "$NODE_BIN" ]; then
     echo -e "${YELLOW}[~] Node.js not found for $PLATFORM-$NODE_ARCH. Downloading...${RESET}"
     NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-${PLATFORM}-${NODE_ARCH}.${NODE_ARCHIVE_EXT}"
     NODE_FALLBACK_URL="https://r2.nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-${PLATFORM}-${NODE_ARCH}.${NODE_ARCHIVE_EXT}"
@@ -156,7 +181,9 @@ if [ ! -f "$NODE_BIN" ]; then
     echo -e "${GREEN}[OK] Node.js installed to $NODE_DIR${RESET}"
 fi
 
-export PATH="$NODE_DIR/bin:$PATH"
+if [ "$TERMUX_MODE" -ne 1 ]; then
+    export PATH="$NODE_DIR/bin:$PATH"
+fi
 
 if ! engine_ready; then
     if [ -d "$OPENCLAUDE_DIR" ]; then
@@ -187,8 +214,19 @@ echo -e "${CYAN}/_/    \\____/_/  \\__/\\__,_/_.___/_/\\___/  /_/  |_/___/   ${R
 echo ""
 echo -e "${CYAN}=========================================================${RESET}"
 echo -e "  ${BOLD}Claude Code - Open Source Multi-Platform${RESET}"
+if [ "$TERMUX_MODE" -eq 1 ]; then
+    echo -e "  ${GREEN}Termux (Android) Mode${RESET}"
+fi
 echo -e "${CYAN}=========================================================${RESET}"
 echo ""
+
+# ─── Termux additional setup ──────────────────────────────
+if [ "$TERMUX_MODE" -eq 1 ]; then
+    if [ ! -d "$HOME/storage" ] && [ ! -f "$HOME/storage/.filled" ]; then
+        echo -e "  ${YELLOW}[!] Termux storage not set up. Run: termux-setup-storage${RESET}"
+        echo -e "  ${DIM}    (For accessing files on shared Android storage)${RESET}"
+    fi
+fi
 
 # ─── Check for flags ────────────────────────────────────────
 SKIP_UPDATE=0

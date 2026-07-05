@@ -28,7 +28,11 @@ elif [ "$OS_NAME" = "linux" ]; then
     OLLAMA_EXT="tar.zst"
     if ! command -v zstd >/dev/null 2>&1; then
         echo -e "${RED}[ERROR] zstd is not installed but is required to extract Ollama on Linux.${RESET}"
-        echo -e "${YELLOW}Please install zstd (e.g. sudo apt install zstd) and try again.${RESET}"
+        if [ -n "$PREFIX" ] && [ -d "$PREFIX" ]; then
+            echo -e "${YELLOW}Please install zstd: pkg install zstd${RESET}"
+        else
+            echo -e "${YELLOW}Please install zstd (e.g. sudo apt install zstd) and try again.${RESET}"
+        fi
         exit 1
     fi
     if [ "$ARCH" = "x86_64" ] || [ "$ARCH" = "amd64" ]; then

@@ -14,29 +14,45 @@ DASHBOARD="$ROOT_DIR/dashboard/server.mjs"
 OS_NAME=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
 
-if [ "$OS_NAME" = "darwin" ]; then
-    PLATFORM="darwin"
-elif [ "$OS_NAME" = "linux" ]; then
-    PLATFORM="linux"
-else
-    echo -e "${RED}[ERROR] Unsupported OS: $OS_NAME${RESET}"
-    exit 1
+# ─── Termux Detection ──────────────────────────────────────
+TERMUX_MODE=0
+if [ -n "$PREFIX" ] && [ -d "$PREFIX" ]; then
+    TERMUX_MODE=1
+elif [ "$OS_NAME" = "linux" ] && echo "$HOME" | grep -q "com.termux"; then
+    TERMUX_MODE=1
 fi
 
-if [ "$ARCH" = "x86_64" ] || [ "$ARCH" = "amd64" ]; then
-    NODE_ARCH="x64"
-elif [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
-    NODE_ARCH="arm64"
+if [ "$TERMUX_MODE" -eq 1 ]; then
+    NODE="$(which node 2>/dev/null || echo '')"
+    if [ -z "$NODE" ] || ! "$NODE" --version >/dev/null 2>&1; then
+        echo -e "  ${RED}[ERROR] Node.js not found! Run: pkg install nodejs${RESET}"
+        exit 1
+    fi
 else
-    echo -e "${RED}[ERROR] Unsupported Architecture: $ARCH${RESET}"
-    exit 1
-fi
+    if [ "$OS_NAME" = "darwin" ]; then
+        PLATFORM="darwin"
+    elif [ "$OS_NAME" = "linux" ]; then
+        PLATFORM="linux"
+    else
+        echo -e "${RED}[ERROR] Unsupported OS: $OS_NAME${RESET}"
+        exit 1
+    fi
 
-NODE="$ENGINE_DIR/node-$PLATFORM-$NODE_ARCH/bin/node"
+    if [ "$ARCH" = "x86_64" ] || [ "$ARCH" = "amd64" ]; then
+        NODE_ARCH="x64"
+    elif [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
+        NODE_ARCH="arm64"
+    else
+        echo -e "${RED}[ERROR] Unsupported Architecture: $ARCH${RESET}"
+        exit 1
+    fi
 
-if [ ! -f "$NODE" ]; then
-    echo -e "  ${RED}[ERROR] Node.js not found. Run start.sh first.${RESET}"
-    exit 1
+    NODE="$ENGINE_DIR/node-$PLATFORM-$NODE_ARCH/bin/node"
+
+    if [ ! -f "$NODE" ]; then
+        echo -e "  ${RED}[ERROR] Node.js not found. Run start.sh first.${RESET}"
+        exit 1
+    fi
 fi
 
 # Portable data
@@ -60,7 +76,13 @@ if [ ! -f "$DASHBOARD" ]; then
 fi
 
 # Check port 3000
-if lsof -i :3000 >/dev/null 2>&1 || lsof -i :3000 2>/dev/null | grep -q ':3000 ' || lsof -i :3000 >/dev/null 2>&1; then
+PORT_CHECK=1
+if command -v lsof >/dev/null 2>&1; then
+    if lsof -i :3000 >/dev/null 2>&1; then PORT_CHECK=0; fi
+elif command -v ss >/dev/null 2>&1; then
+    if ss -tlnp | grep -q ':3000 '; then PORT_CHECK=0; fi
+fi
+if [ "$PORT_CHECK" -eq 0 ]; then
     echo -e "  ${YELLOW}[WARNING] Port 3000 is already in use!${RESET}"
     echo ""
     echo -e "  ${CYAN}1)${RESET} Open browser anyway"
