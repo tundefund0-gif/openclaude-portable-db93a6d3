@@ -11,7 +11,7 @@
 set -e
 
 CYAN='\033[36m'; GREEN='\033[32m'; YELLOW='\033[33m'; RED='\033[31m'
-BOLD='\033[1m'; RESET='\033[0m'
+DIM='\033[90m'; BOLD='\033[1m'; RESET='\033[0m'
 
 echo ""
 echo -e "${CYAN}=========================================================${RESET}"
@@ -25,9 +25,11 @@ if [ -z "$PREFIX" ] || [ ! -d "$PREFIX" ]; then
     exit 1
 fi
 
-# --- Request storage permission ---
-echo -e "${YELLOW}[~] Requesting storage access...${RESET}"
-termux-setup-storage 2>/dev/null || true
+# --- Request storage permission (optional, skip if already set up) ---
+if [ ! -d "$HOME/storage" ]; then
+    echo -e "${YELLOW}[~] Requesting storage access (5s timeout)...${RESET}"
+    timeout 5 termux-setup-storage 2>/dev/null || echo -e "${DIM}    Skipped (not required for operation)${RESET}"
+fi
 
 # --- Update packages ---
 echo -e "${YELLOW}[~] Updating Termux packages...${RESET}"
