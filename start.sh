@@ -31,9 +31,9 @@ if [ "$TERMUX_MODE" -eq 1 ]; then
     PLATFORM="linux"
     NODE_ARCHIVE_EXT="tar.xz"
     NODE_ARCH="arm64"
-    NODE_BIN="$(which node 2>/dev/null || echo '')"
-    NPM_BIN="$(which npm 2>/dev/null || echo '')"
-    NPX_BIN="$(which npx 2>/dev/null || echo '')"
+    NODE_BIN="$(command -v node 2>/dev/null || echo '')"
+    NPM_BIN="$(command -v npm 2>/dev/null || echo '')"
+    NPX_BIN="$(command -v npx 2>/dev/null || echo '')"
     echo -e "${GREEN}[OK] Termux detected - using system Node.js${RESET}"
 else
     if [ "$OS_NAME" = "darwin" ]; then

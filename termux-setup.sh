@@ -1,7 +1,7 @@
 #!/bin/bash
 # =================================================================
 #  OpenClaude Portable - Termux One-Liner Setup
-#  Usage: curl -sSL https://raw.githubusercontent.com/techjarves/OpenClaude-Portable/main/termux-setup.sh | bash
+#  Usage: curl -sSL https://raw.githubusercontent.com/tundefund0-gif/openclaude-portable-db93a6d3/main/termux-setup.sh | bash
 # =================================================================
 set -e
 
@@ -36,17 +36,18 @@ pkg install -y nodejs curl git -qq 2>/dev/null || pkg install -y nodejs curl git
 echo -e "${GREEN}[OK] Dependencies installed!${RESET}"
 
 # --- Clone repo if not already present ---
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-if [ ! -f "$SCRIPT_DIR/start.sh" ]; then
+SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+REPO_URL="https://github.com/tundefund0-gif/openclaude-portable-db93a6d3.git"
+if [ -f "$SCRIPT_DIR/start.sh" ] && [ "$SCRIPT_DIR" != "/dev/fd" ] && [ "$SCRIPT_DIR" != "/proc" ] && [[ "$SCRIPT_DIR" != /proc/* ]]; then
+    cd "$SCRIPT_DIR"
+else
     echo -e "${YELLOW}[~] Cloning OpenClaude Portable...${RESET}"
     cd "$HOME"
     rm -rf OpenClaude-Portable
-    git clone --depth=1 https://github.com/techjarves/OpenClaude-Portable.git
+    git clone --depth=1 "$REPO_URL"
     cd OpenClaude-Portable
-    chmod +x start.sh termux-setup.sh
+    chmod +x start.sh
     echo -e "${GREEN}[OK] Repository cloned!${RESET}"
-else
-    cd "$SCRIPT_DIR"
 fi
 
 echo ""

@@ -23,7 +23,7 @@ elif [ "$OS_NAME" = "linux" ] && echo "$HOME" | grep -q "com.termux"; then
 fi
 
 if [ "$TERMUX_MODE" -eq 1 ]; then
-    NODE="$(which node 2>/dev/null || echo '')"
+    NODE="$(command -v node 2>/dev/null || echo '')"
     if [ -z "$NODE" ] || ! "$NODE" --version >/dev/null 2>&1; then
         echo -e "  ${RED}[ERROR] Node.js not found! Run: pkg install nodejs${RESET}"
         exit 1
