@@ -52,7 +52,7 @@ echo -e "${GREEN}=========================================================${RESE
 echo -e "  ${BOLD}Setup complete! Run ./start.sh to launch.${RESET}"
 echo -e "${GREEN}=========================================================${RESET}"
 echo ""
-echo -e "  ${CYAN}Quick start:${RESET} ./start.sh"
+echo -e "  ${CYAN}Quick start:${RESET} cd ~/openclaude-portable && ./start.sh"
 echo -e "  ${CYAN}One-liner (next time):${RESET}"
 echo -e "    git clone --depth=1 https://github.com/tundefund0-gif/openclaude-portable-db93a6d3.git ~/openclaude-portable && bash ~/openclaude-portable/termux-setup.sh"
 echo ""

@@ -222,9 +222,10 @@ echo ""
 
 # ─── Termux additional setup ──────────────────────────────
 if [ "$TERMUX_MODE" -eq 1 ]; then
-    if [ ! -d "$HOME/storage" ] && [ ! -f "$HOME/storage/.filled" ]; then
-        echo -e "  ${YELLOW}[!] Termux storage not set up. Run: termux-setup-storage${RESET}"
-        echo -e "  ${DIM}    (For accessing files on shared Android storage)${RESET}"
+    TERMUX_REAL_HOME="$(dirname "$PREFIX")"
+    if [ ! -d "$TERMUX_REAL_HOME/storage" ]; then
+        echo -e "  ${DIM}[i] Termux storage not linked. Run: termux-setup-storage${RESET}"
+        echo -e "  ${DIM}    (Optional - for accessing shared Android files)${RESET}"
     fi
 fi
 
