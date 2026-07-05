@@ -1,7 +1,10 @@
 #!/bin/bash
 # =================================================================
-#  Portable AI USB - Start AI (macOS/Linux)
+#  Portable AI USB - Start AI (macOS/Linux/Termux)
 # =================================================================
+
+# Self-heal permissions (in case git checkout/pull stripped them)
+[ -x "$0" ] || chmod +x "$0" 2>/dev/null
 
 CYAN='\033[36m'; GREEN='\033[32m'; YELLOW='\033[33m'; RED='\033[31m'
 DIM='\033[90m'; BOLD='\033[1m'; RESET='\033[0m'

@@ -45,7 +45,7 @@ echo -e "${GREEN}[OK] Dependencies installed!${RESET}"
 # --- Ensure we're in the repo directory ---
 SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
 cd "$SCRIPT_DIR"
-chmod +x start.sh 2>/dev/null || true
+chmod +x start.sh tools/*.sh 2>/dev/null || true
 
 echo ""
 echo -e "${GREEN}=========================================================${RESET}"
