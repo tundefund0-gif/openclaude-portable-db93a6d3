@@ -37,7 +37,7 @@ cleanup() {
     fi
     exit 0
 }
-trap cleanup SIGINT SIGTERM EXIT
+TRAP=1; trap cleanup SIGINT SIGTERM; trap 'TRAP=0' EXIT
 
 # ── Helpers ─────────────────────────────────────────────────
 say() { echo -e "$1"; }
@@ -145,7 +145,9 @@ verify_key() {
         openai)     curl -sf -H "Authorization: Bearer $k" https://api.openai.com/v1/models >/dev/null 2>&1 ;;
         lmstudio)   curl -sf -H "Authorization: Bearer lm-studio" "${k%/}/models" >/dev/null 2>&1 ;;
         custom|ollama) return 0 ;;
+        *) return 1 ;;
     esac
+    return $?
 }
 
 pick_model() {
@@ -164,7 +166,7 @@ pick_model() {
     [ -z "$USER_MODEL" ] && USER_MODEL="${arr[1]}"
 }
 
-fetch_models() { curl -sf -H "Authorization: Bearer ${2:-x}" "${1}" 2>/dev/null; }
+fetch_models() { curl -sf -H "Authorization: Bearer ${2:-x}" "${1}" 2>/dev/null || true; }
 
 # ── Provider Setups ─────────────────────────────────────────
 setup_provider() {
@@ -400,10 +402,25 @@ say "${C}=========================================================${N}"
 say ""
 
 # ── Flags ───────────────────────────────────────────────────
-OFFLINE=0; QUICK=0
+OFFLINE=0; QUICK=0; RESET=0
 for arg in "$@"; do
     [ "$arg" = "--offline" ] && OFFLINE=1
     [ "$arg" = "--quick" ] && QUICK=1
+    [ "$arg" = "--reset-config" ] && RESET=1
+    if [ "$arg" = "--help" ] || [ "$arg" = "-h" ]; then
+        echo ""
+        echo "  OpenClaude Portable - Zero-footprint AI coding agent"
+        echo ""
+        echo "  Usage: ./start.sh [OPTIONS]"
+        echo ""
+        echo "  Options:"
+        echo "    --quick         Skip permissions (Limitless mode)"
+        echo "    --offline       Skip update checks"
+        echo "    --reset-config  Re-run provider setup"
+        echo "    --help, -h      Show this help"
+        echo ""
+        exit 0
+    fi
 done
 
 # ── Update Check ────────────────────────────────────────────
@@ -419,6 +436,10 @@ else
 fi
 
 # ── Config ──────────────────────────────────────────────────
+if [ $RESET -eq 1 ]; then
+    rm -f "$ENV_FILE"
+    warn "Config reset. Setting up new provider..."
+fi
 if ! load_config; then
     setup_provider
     say ""
@@ -466,8 +487,8 @@ else
         LAUNCH=""
         for i in 9 8 7 6 5 4 3 2 1 0; do
             printf "\r  Select (1-5) [auto ${i}]: "
-            if [ "$TERMUX" -eq 1 ]; then read -t 1 LAUNCH 2>/dev/null
-            else read -t 1 -n 1 LAUNCH 2>/dev/null; fi
+            if [ "$TERMUX" -eq 1 ]; then read -t 1 LAUNCH 2>/dev/null || true
+            else read -t 1 -n 1 LAUNCH 2>/dev/null || true; fi
             [ -n "$LAUNCH" ] && break
         done
         [ -z "$LAUNCH" ] && LAUNCH="1"
@@ -475,9 +496,9 @@ else
         case "$LAUNCH" in
             1) break ;;
             2) CMD_ARGS="--dangerously-skip-permissions"; break ;;
-            3) exec bash "$ROOT/tools/open_dashboard.sh" ;;
-            4) exec bash "$ROOT/tools/change_provider.sh" ;;
-            5) exec bash "$ROOT/tools/setup_local_models.sh" ;;
+            3) trap - EXIT; exec bash "$ROOT/tools/open_dashboard.sh" ;;
+            4) trap - EXIT; exec bash "$ROOT/tools/change_provider.sh" ;;
+            5) trap - EXIT; exec bash "$ROOT/tools/setup_local_models.sh" ;;
             *) say "  ${R}Invalid${N}" ;;
         esac
     done

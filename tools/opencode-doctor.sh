@@ -1,6 +1,7 @@
 #!/bin/bash
 # =================================================================
 #  OpenClaude Portable - Doctor (Diagnostics)
+#  Usage: bash tools/opencode-doctor.sh
 #  Checks all components and reports health status
 # =================================================================
 

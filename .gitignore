@@ -1,15 +1,8 @@
-# ── Generated / downloaded binaries ──────────────────────────────
-/engine/
-/Windows/bin/
-/Linux/bin/
-/Mac/bin/
-
-# ── Personal data (API keys, chats, logs) ─────────────────────────
-/data/
-
-# ── macOS junk ────────────────────────────────────────────────────
+data/
+engine/node_modules/
+engine/node-dl.log
+engine/install.log
+engine/node.*/
+dashboard/node_modules/
 .DS_Store
-
-# ── Node.js ───────────────────────────────────────────────────────
-node_modules/
-npm-debug.log*
+Thumbs.db

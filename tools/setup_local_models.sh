@@ -1,9 +1,10 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════
-#  OpenClaude Portable - Ollama Model Setup (All Platforms)
+#  OpenClaude Portable - Local Models (All Platforms)
+#  Installs/manages Ollama and runs offline models
 # ═══════════════════════════════════════════════════════════
 
-set -e
+set -euo pipefail
 
 CYAN='\033[36m'; GREEN='\033[32m'; YELLOW='\033[33m'; RED='\033[31m'
 DIM='\033[90m'; MAGENTA='\033[35m'; BOLD='\033[1m'; RESET='\033[0m'

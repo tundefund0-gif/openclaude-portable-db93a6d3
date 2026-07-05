@@ -1,25 +1,18 @@
-# =================================================================
-#  Git Line Ending Rules - Portable AI USB
-#  Prevents CRLF corruption when cloning on Windows
-# =================================================================
-
-# Default: normalize all text files to LF
+# Cross-platform line endings
 * text=auto eol=lf
-
-# Shell scripts must always use LF (Unix line endings)
 *.sh text eol=lf
-
-# Windows batch files must use CRLF
+*.mjs text eol=lf
+*.ts text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.env text eol=lf
+*.gitattributes text eol=lf
+*.gitignore text eol=lf
 *.bat text eol=crlf
 *.cmd text eol=crlf
-*.ps1 text eol=crlf
-
-# Explicitly binary files (no line ending conversion)
-*.gz binary
+# Never commit binary files
 *.tar binary
+*.tar.gz binary
+*.tar.xz binary
 *.zip binary
-*.node binary
-*.png binary
-*.jpg binary
-*.jpeg binary
-*.ico binary
