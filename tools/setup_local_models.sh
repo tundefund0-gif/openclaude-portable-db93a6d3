@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════
-#  Portable AI USB - Local Model Setup (macOS/Linux)
+#  OpenClaude Portable - Ollama Model Setup (All Platforms)
 # ═══════════════════════════════════════════════════════════
 
 set -e

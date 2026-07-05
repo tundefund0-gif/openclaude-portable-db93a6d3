@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════
-#  Portable AI USB - Change Model/Provider (macOS/Linux)
+#  OpenClaude Portable - Change Model/Provider (All Platforms)
 # ═══════════════════════════════════════════════════════════
 
 CYAN='\033[36m'; GREEN='\033[32m'; YELLOW='\033[33m'; RED='\033[31m'
