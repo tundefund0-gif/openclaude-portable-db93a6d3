@@ -43,9 +43,9 @@ if [ -f "$SCRIPT_DIR/start.sh" ] && [ "$SCRIPT_DIR" != "/dev/fd" ] && [ "$SCRIPT
 else
     echo -e "${YELLOW}[~] Cloning OpenClaude Portable...${RESET}"
     cd "$HOME"
-    rm -rf OpenClaude-Portable
-    git clone --depth=1 "$REPO_URL"
-    cd OpenClaude-Portable
+    rm -rf openclaude-portable
+    git clone --depth=1 "$REPO_URL" openclaude-portable
+    cd openclaude-portable
     chmod +x start.sh
     echo -e "${GREEN}[OK] Repository cloned!${RESET}"
 fi
@@ -55,6 +55,6 @@ echo -e "${GREEN}=========================================================${RESE
 echo -e "  ${BOLD}Setup complete! Run ./start.sh to launch.${RESET}"
 echo -e "${GREEN}=========================================================${RESET}"
 echo ""
-echo -e "  ${CYAN}Quick start:${RESET} ./start.sh"
+echo -e "  ${CYAN}Quick start:${RESET} cd openclaude-portable && ./start.sh"
 echo -e "  ${CYAN}One-liner (next time):${RESET} bash termux-setup.sh"
 echo ""
