@@ -38,14 +38,16 @@ echo -e "${GREEN}[OK] Dependencies installed!${RESET}"
 # --- Clone repo if not already present ---
 SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
 REPO_URL="https://github.com/tundefund0-gif/openclaude-portable-db93a6d3.git"
+CLONE_DIR="openclaude-portable"
 if [ -f "$SCRIPT_DIR/start.sh" ] && [ "$SCRIPT_DIR" != "/dev/fd" ] && [ "$SCRIPT_DIR" != "/proc" ] && [[ "$SCRIPT_DIR" != /proc/* ]]; then
     cd "$SCRIPT_DIR"
 else
     echo -e "${YELLOW}[~] Cloning OpenClaude Portable...${RESET}"
     cd "$HOME"
-    rm -rf openclaude-portable
-    git clone --depth=1 "$REPO_URL" openclaude-portable
-    cd openclaude-portable
+    # Clean up any stale directories from previous runs
+    rm -rf "$CLONE_DIR" "OpenClaude-Portable" "openclaude-portable-db93a6d3"
+    git clone --depth=1 "$REPO_URL" "$CLONE_DIR"
+    cd "$CLONE_DIR"
     chmod +x start.sh
     echo -e "${GREEN}[OK] Repository cloned!${RESET}"
 fi
@@ -55,6 +57,6 @@ echo -e "${GREEN}=========================================================${RESE
 echo -e "  ${BOLD}Setup complete! Run ./start.sh to launch.${RESET}"
 echo -e "${GREEN}=========================================================${RESET}"
 echo ""
-echo -e "  ${CYAN}Quick start:${RESET} cd openclaude-portable && ./start.sh"
-echo -e "  ${CYAN}One-liner (next time):${RESET} bash termux-setup.sh"
+echo -e "  ${CYAN}Quick start:${RESET} cd ~/openclaude-portable && ./start.sh"
+echo -e "  ${CYAN}One-liner (next time):${RESET} bash ~/openclaude-portable/termux-setup.sh"
 echo ""
