@@ -16,7 +16,8 @@ const IS_MAC = process.platform === 'darwin';
 const PLATFORM_DIR = IS_WIN ? 'win' : IS_MAC ? 'darwin' : 'linux';
 const ARCH_DIR = process.arch === 'x64' || process.arch === 'amd64' ? 'x64' : 'arm64';
 const BIN_DIR = join(ROOT_DIR, 'engine', `node-${PLATFORM_DIR}-${ARCH_DIR}`, 'bin');
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
+const IS_TERMUX = process.env.PREFIX && process.platform === 'linux' && process.arch === 'arm64';
 let WORK_DIR = ROOT_DIR; // Default working directory
 
 // ─── Helpers ─────────────────────────────────────────────────
@@ -901,6 +902,20 @@ const server = createServer(async (req, res) => {
             }
         }
 
+        // Health
+        if (url.pathname === '/api/health' && req.method === 'GET') {
+            return sendJSON(res, 200, {
+                status: 'ok',
+                version: '1.1.0',
+                uptime: process.uptime(),
+                platform: process.platform,
+                arch: process.arch,
+                nodeVersion: process.version,
+                configExists: existsSync(ENV_FILE),
+                ollamaInstalled: existsSync(join(DATA_DIR, 'ollama', 'ollama')) || existsSync(join(DATA_DIR, 'ollama', 'ollama.exe')),
+            });
+        }
+
         // System
         if (url.pathname === '/api/system' && req.method === 'GET') return sendJSON(res, 200, getSystemInfo());
 
@@ -928,12 +943,11 @@ const server = createServer(async (req, res) => {
         if (url.pathname === '/api/launch' && req.method === 'POST') {
             const { mode } = await readBody(req);
             const quickFlag = mode === 'limitless' ? ' --quick' : '';
+            const startScript = join(ROOT_DIR, IS_WIN ? 'START.bat' : 'start.sh');
             if (IS_WIN) {
-                const batFile = join(ROOT_DIR, 'Windows', 'Start_AI.bat');
-                exec(`start cmd /k "${batFile}"${quickFlag}`, { cwd: join(ROOT_DIR, 'Windows') });
+                exec(`start "" /B cmd /c "${startScript}"${quickFlag}`);
             } else {
-                const shFile = join(ROOT_DIR, PLATFORM_DIR, PLATFORM_DIR === 'Mac' ? 'Start_AI.command' : 'start_ai.sh');
-                exec(`bash "${shFile}"${quickFlag}`, { cwd: join(ROOT_DIR, PLATFORM_DIR) });
+                exec(`bash "${startScript}"${quickFlag} > /dev/null 2>&1 &`);
             }
             return sendJSON(res, 200, { success: true });
         }

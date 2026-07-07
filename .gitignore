@@ -1,8 +1,13 @@
+# Data (settings, chats, Ollama models, home)
 data/
 engine/node_modules/
 engine/node-dl.log
 engine/install.log
 engine/node.*/
+
 dashboard/node_modules/
+
+# OS
 .DS_Store
 Thumbs.db
+*.log

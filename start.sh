@@ -1,6 +1,6 @@
 #!/bin/bash
 # =================================================================
-#  OpenClaude Portable v1.0
+#  OpenClaude Portable v1.1.0
 #  Zero-footprint AI coding agent - macOS / Linux / Termux (Android)
 # =================================================================
 
@@ -47,13 +47,17 @@ fail() { say "  ${R}[ERROR]${N} $1"; exit 1; }
 info() { say "  ${D}[i]${N} $1"; }
 
 spin() {
-    local pid=$1 msg="$2"
+    local pid=$1 msg="$2" max=${3:-300}
     local s=0 sp='/-\|'
-    while kill -0 "$pid" 2>/dev/null; do
+    while kill -0 "$pid" 2>/dev/null && [ $s -lt $max ]; do
         printf "\r  ${D}${msg}... ${sp:s++%4:1} ${s}s${N}"
         sleep 1
     done
     printf "\r"
+    if kill -0 "$pid" 2>/dev/null; then
+        kill "$pid" 2>/dev/null || true
+        return 1
+    fi
     wait "$pid"
     return $?
 }
@@ -105,14 +109,24 @@ install_engine() {
     cd "$ENGINE"
     mkdir -p "$NPM_CACHE"
     : > "$INSTALL_LOG"
+    local TIMEOUT=120
     NPM_CONFIG_CACHE="$NPM_CACHE" "$NPM" install @gitlawb/openclaude@latest \
         --no-audit --no-fund --loglevel=warn --no-bin-links --cache "$NPM_CACHE" \
         >> "$INSTALL_LOG" 2>&1 &
-    spin $! "${action} engine"
+    local npm_pid=$!
+    spin $npm_pid "${action} engine" "$TIMEOUT"
     local st=$?
-    [ $st -ne 0 ] && fail "Install failed (npm exit $st). Check $INSTALL_LOG"
-    engine_ok || fail "Engine incomplete. Run again to repair."
-    ok "Engine ${action,,}ed!"
+    if [ $st -eq 0 ] && engine_ok; then
+        ok "Engine ${action,,}ed!"
+    elif [ $st -ne 0 ]; then
+        if kill -0 "$npm_pid" 2>/dev/null; then
+            warn "npm timed out after ${TIMEOUT}s — killing..."
+            kill "$npm_pid" 2>/dev/null || true
+        fi
+        fail "Install failed (npm exit $st). See $INSTALL_LOG"
+    else
+        fail "Engine incomplete. Run again to repair."
+    fi
 }
 
 # ── Config Load / Save ──────────────────────────────────────
@@ -384,6 +398,7 @@ export LOCALAPPDATA="$DATA/local_app_data"
 export XDG_CONFIG_HOME="$DATA/config"
 export XDG_DATA_HOME="$DATA/app_data"
 export XDG_CACHE_HOME="$DATA/cache"
+export PATH="$ENGINE/node_modules/.bin:$PATH"
 mkdir -p "$CLAUDE_CONFIG_DIR" "$HOME" "$APPDATA" "$LOCALAPPDATA" \
        "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME" "$DATA"
 
@@ -404,23 +419,33 @@ say ""
 # ── Flags ───────────────────────────────────────────────────
 OFFLINE=0; QUICK=0; RESET=0
 for arg in "$@"; do
-    [ "$arg" = "--offline" ] && OFFLINE=1
-    [ "$arg" = "--quick" ] && QUICK=1
-    [ "$arg" = "--reset-config" ] && RESET=1
-    if [ "$arg" = "--help" ] || [ "$arg" = "-h" ]; then
-        echo ""
-        echo "  OpenClaude Portable - Zero-footprint AI coding agent"
-        echo ""
-        echo "  Usage: ./start.sh [OPTIONS]"
-        echo ""
-        echo "  Options:"
-        echo "    --quick         Skip permissions (Limitless mode)"
-        echo "    --offline       Skip update checks"
-        echo "    --reset-config  Re-run provider setup"
-        echo "    --help, -h      Show this help"
-        echo ""
-        exit 0
-    fi
+    case "$arg" in
+        --offline) OFFLINE=1 ;;
+        --quick) QUICK=1 ;;
+        --reset-config) RESET=1 ;;
+        --doctor|--diagnose) exec bash "$ROOT/tools/opencode-doctor.sh" ;;
+        --update) exec bash "$ROOT/tools/opencode-update.sh" ;;
+        --version|-v)
+            echo "OpenClaude Portable v1.1.0"
+            echo "Engine: @gitlawb/openclaude"
+            exit 0 ;;
+        --help|-h)
+            echo ""
+            echo "  OpenClaude Portable v1.1.0 - Zero-footprint AI coding agent"
+            echo ""
+            echo "  Usage: ./start.sh [OPTIONS]"
+            echo ""
+            echo "  Options:"
+            echo "    --quick           Skip permissions (Limitless mode)"
+            echo "    --offline         Skip update checks"
+            echo "    --reset-config    Re-run provider setup"
+            echo "    --doctor/--diagnose Run diagnostics"
+            echo "    --update          Pull latest + reinstall engine"
+            echo "    --version, -v     Show version"
+            echo "    --help, -h        Show this help"
+            echo ""
+            exit 0 ;;
+    esac
 done
 
 # ── Update Check ────────────────────────────────────────────
@@ -513,7 +538,11 @@ if [ "$AI_PROVIDER" = "ollama" ]; then
         export OLLAMA_MODELS="$DATA/ollama/data"
         "$bin" serve >/dev/null 2>&1 &
         OLLAMA_PID=$!; sleep 3
-        ok "Ollama running"
+        if kill -0 "$OLLAMA_PID" 2>/dev/null; then
+            ok "Ollama running (PID $OLLAMA_PID)"
+        else
+            warn "Ollama may have failed to start"
+        fi
     fi
 fi
 
