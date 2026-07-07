@@ -189,14 +189,7 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,sans-serif;b
 .tool-status.pending{background:rgba(234,179,8,0.15);color:#eab308}
 .tool-body{padding:12px 14px;font-family:'SF Mono',monospace;font-size:0.76rem;white-space:pre-wrap;word-break:break-all;max-height:200px;overflow:auto;color:var(--text2);display:none}
 .tool-body.open{display:block}
-/* Approval buttons */
-.approval-bar{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--border);align-items:center}
-.approval-bar .approve-btn{padding:5px 16px;border-radius:6px;font-size:0.76rem;font-weight:600;cursor:pointer;border:none;font-family:inherit;transition:0.2s}
-.approve-btn.yes{background:var(--success);color:#fff}
-.approve-btn.yes:hover{filter:brightness(1.1)}
-.approve-btn.no{background:var(--error);color:#fff}
-.approve-btn.no:hover{filter:brightness(1.1)}
-.approval-label{font-size:0.72rem;color:var(--text2);flex:1}
+
 /* Working dir bar */
 .workdir-bar{display:flex;align-items:center;gap:6px;padding:4px 14px;font-size:0.68rem;color:var(--text3);background:var(--surface2);border-top:1px solid var(--border)}
 .workdir-bar span{font-family:'SF Mono',monospace;cursor:pointer;color:var(--text2)}
@@ -423,15 +416,13 @@ select{appearance:none;cursor:pointer;background-image:url("data:image/svg+xml,%
       <!-- Input -->
       <div class="input-area">
         <div class="mode-toggle" id="modeToggle">
-          <span class="mode-label">Mode:</span>
-          <div class="mode-pills" id="modePills">
-            <button class="mode-pill active-normal" id="modeNormal" onclick="setMode('normal')">Normal</button>
-            <button class="mode-pill" id="modeLimitless" onclick="setMode('limitless')">Limitless ⚡</button>
+          <span class="mode-label">Agent:</span>
+          <div class="mode-pills">
+            <span class="mode-pill active-limitless">Limitless ⚡</span>
           </div>
           <div class="agent-toggle">
-            <label><span class="agent-switch"><input type="checkbox" id="agentToggle" onchange="toggleAgent(this.checked)"><span class="agent-slider"></span></span> Agent Mode</label>
+            <label><span class="agent-switch"><input type="checkbox" id="agentToggle" checked onchange="toggleAgent(this.checked)"><span class="agent-slider"></span></span> Agent Mode</label>
           </div>
-          <span id="modeLockBadge" style="display:none"></span>
         </div>
         <div class="input-bar">
           <textarea id="chatInput" placeholder="Message AI..." rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
@@ -553,8 +544,7 @@ select{appearance:none;cursor:pointer;background-image:url("data:image/svg+xml,%
       <div class="page-inner">
         <div class="card"><h2>Quick Actions</h2><p class="subtitle">Launch and manage your AI environment</p>
           <div class="action-grid">
-            <div class="action-card" onclick="launchAI('normal')"><div class="action-icon">▶️</div><div class="action-title">Launch AI</div><div class="action-desc">Normal mode</div></div>
-            <div class="action-card" onclick="launchAI('limitless')"><div class="action-icon">⚡</div><div class="action-title">Launch Limitless</div><div class="action-desc">Auto-execute mode</div></div>
+            <div class="action-card" onclick="launchAI()"><div class="action-icon">⚡</div><div class="action-title">Launch AI</div><div class="action-desc">Limitless mode</div></div>
             <div class="action-card" onclick="exportConfig()"><div class="action-icon">📥</div><div class="action-title">Export Config</div><div class="action-desc">Download backup</div></div>
             <div class="action-card" onclick="document.getElementById('importFile').click()"><div class="action-icon">📤</div><div class="action-title">Import Config</div><div class="action-desc">Restore settings</div></div>
           </div>
@@ -609,7 +599,7 @@ let allModels = [];
 let setupState = { provider:'', key:'', model:'', tier:'free', baseUrl:'' };
 let streamController = null;
 let userScrolled = false;
-let currentMode = 'normal';
+let currentMode = 'limitless';
 let modeLocked = false;
 let agentMode = false;
 let workDir = '';
@@ -805,25 +795,6 @@ async function startNewChat() {
 }
 
 // ─── Mode Toggle ────────────────────────────────────────────
-function setMode(mode) {
-  if (modeLocked) return;
-  currentMode = mode;
-  document.getElementById('modeNormal').className = 'mode-pill' + (mode === 'normal' ? ' active-normal' : '');
-  document.getElementById('modeLimitless').className = 'mode-pill' + (mode === 'limitless' ? ' active-limitless' : '');
-}
-
-function lockMode() {
-  modeLocked = true;
-  document.getElementById('modeToggle').style.display = 'none';
-}
-
-function resetMode() {
-  modeLocked = false;
-  currentMode = 'normal';
-  document.getElementById('modeToggle').style.display = 'flex';
-  document.getElementById('modePills').classList.remove('mode-locked');
-  setMode('normal');
-}
 
 function toggleAgent(enabled) {
   agentMode = enabled;
@@ -1058,22 +1029,10 @@ async function sendAgentMessage(text, typingEl) {
             toolCards.set(data.id, card);
             document.getElementById('messages').appendChild(card);
             scrollToBottom();
-          } else if (data.type === 'approval_needed') {
-            const card = toolCards.get(data.id);
-            if (card) addApprovalButtons(card, data.id);
-            scrollToBottom();
           } else if (data.type === 'tool_result') {
             const card = toolCards.get(data.id);
             if (card) updateToolCardResult(card, data);
             scrollToBottom();
-          } else if (data.type === 'tool_rejected') {
-            const card = toolCards.get(data.id);
-            if (card) {
-              card.querySelector('.tool-status').className = 'tool-status rejected';
-              card.querySelector('.tool-status').textContent = 'Rejected';
-              const ab = card.querySelector('.approval-bar');
-              if (ab) ab.remove();
-            }
           } else if (data.type === 'agent_text') {
             // Finalize thinking card
             if (thinkingEl) {
@@ -1141,35 +1100,18 @@ function createToolCard(data) {
       <div class="tool-header" onclick="this.nextElementSibling.classList.toggle('open')">
         <span class="tool-icon">${icons[data.name]||'🔧'}</span>
         <span class="tool-name">${data.name}(${escHtml(String(argsPreview||'').slice(0,60))})</span>
-        <span class="tool-status running">${data.needsApproval ? 'Pending' : 'Running'}</span>
+        <span class="tool-status running">Running</span>
       </div>
       <div class="tool-body">${data.name === 'write_file' ? escHtml(data.args.content||'').slice(0,2000) : JSON.stringify(data.args, null, 2)}</div>
     </div></div>`;
   return el;
 }
 
-function addApprovalButtons(card, callId) {
-  const tc = card.querySelector('.tool-card');
-  tc.querySelector('.tool-status').className = 'tool-status pending';
-  tc.querySelector('.tool-status').textContent = 'Needs Approval';
-  const bar = document.createElement('div');
-  bar.className = 'approval-bar';
-  bar.innerHTML = `<span class="approval-label">This action modifies your system. Allow?</span><button class="approve-btn yes" onclick="approveToolCall('${callId}',true,this)">✓ Approve</button><button class="approve-btn no" onclick="approveToolCall('${callId}',false,this)">✗ Reject</button>`;
-  tc.appendChild(bar);
-}
-
-async function approveToolCall(callId, approved, btn) {
-  const bar = btn.closest('.approval-bar');
-  bar.innerHTML = `<span class="approval-label">${approved ? 'Approved — executing...' : 'Rejected'}</span>`;
-  try { await fetch(`${API}/api/agent/approve`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({callId,approved}) }); } catch {}
-}
-
 function updateToolCardResult(card, data) {
   const tc = card.querySelector('.tool-card');
   const status = tc.querySelector('.tool-status');
   const body = tc.querySelector('.tool-body');
-  const ab = tc.querySelector('.approval-bar');
-  if (ab) ab.remove();
+
   if (data.result?.success) {
     status.className = 'tool-status success';
     status.textContent = 'Done';

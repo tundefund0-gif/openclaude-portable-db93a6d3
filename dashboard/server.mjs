@@ -510,47 +510,17 @@ function appendToolResult(messages, toolCall, result, provider) {
     }
 }
 
-// ─── Approval System ─────────────────────────────────────────
-
-const pendingApprovals = new Map();
-
-function waitForApproval(callId, timeoutMs = 120000) {
-    return new Promise((resolve) => {
-        const timer = setTimeout(() => {
-            pendingApprovals.delete(callId);
-            resolve(false);
-        }, timeoutMs);
-        pendingApprovals.set(callId, { resolve, timer });
-    });
-}
-
-function resolveApproval(callId, approved) {
-    const pending = pendingApprovals.get(callId);
-    if (pending) {
-        clearTimeout(pending.timer);
-        pending.resolve(approved);
-        pendingApprovals.delete(callId);
-        return true;
-    }
-    return false;
-}
-
 // ─── Agentic Loop ────────────────────────────────────────────
 
-async function runAgent(allMessages, cfg, mode, sendSSE) {
+async function runAgent(allMessages, cfg, sendSSE) {
     const provider = cfg.AI_PROVIDER;
-    const MAX_ITERATIONS = 15;
+    const MAX_ITERATIONS = 200;
     let finalText = '';
 
-    const systemPrompts = {
-        normal: `You are a powerful AI coding agent running in a web dashboard. You have access to tools to create files, read files, list directories, execute shell commands, and search files. The current working directory is: ${WORK_DIR}. Before executing write operations, briefly explain what you are about to do. Use tools to actually perform actions - do not just describe what to do.`,
-        limitless: `You are an autonomous AI coding agent running in Limitless mode. You have access to tools to create files, read files, list directories, execute shell commands, and search files. The current working directory is: ${WORK_DIR}. Execute tasks directly and completely without asking for confirmation. Use tools to actually perform actions. Be decisive and thorough.`
-    };
+    const systemPrompt = `You are an autonomous AI coding agent. You have access to tools to create files, read files, list directories, execute shell commands, and search files. The current working directory is: ${WORK_DIR}. Execute tasks directly and completely without asking for confirmation. Use tools to actually perform actions — do not just describe what to do. Never ask the user for permission — make reasonable assumptions and proceed. When a task requires multiple steps, work through them systematically until the task is fully complete. Keep going until done.`;
 
-    // Insert system message at start
-    const sysContent = systemPrompts[mode] || systemPrompts.normal;
     if (allMessages.length === 0 || allMessages[0].role !== 'system') {
-        allMessages.unshift({ role: 'system', content: sysContent });
+        allMessages.unshift({ role: 'system', content: systemPrompt });
     }
 
     for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
@@ -560,59 +530,36 @@ async function runAgent(allMessages, cfg, mode, sendSSE) {
         try {
             aiResponse = await callAI(allMessages, cfg, true);
         } catch (e) {
-            // If tools failed, try once without tools as fallback
             if (iter === 0) {
                 try {
                     sendSSE({ type: 'agent_reasoning', content: 'Tool calling not supported by this model, falling back to chat mode...', iteration: 1 });
                     aiResponse = await callAI(allMessages, cfg, false);
                 } catch (e2) {
-                    const errText = `⚠️ Agent Error: ${e2.message}`;
                     sendSSE({ type: 'agent_error', error: e2.message });
-                    return errText;
+                    return `⚠️ Agent Error: ${e2.message}`;
                 }
             } else {
-                const errText = `⚠️ Agent Error: ${e.message}`;
                 sendSSE({ type: 'agent_error', error: e.message });
-                return errText;
+                return `⚠️ Agent Error: ${e.message}`;
             }
         }
 
-        // If AI returned reasoning text alongside tool calls, send as thinking
         if (aiResponse.content && aiResponse.toolCalls.length > 0) {
             sendSSE({ type: 'agent_reasoning', content: aiResponse.content, iteration: iter + 1 });
         }
 
-        // If tool calls exist, process them
         if (aiResponse.toolCalls.length > 0) {
-            // Append assistant message with tool calls
             appendAssistantMessage(allMessages, aiResponse, provider);
 
             for (const tc of aiResponse.toolCalls) {
-                const isWrite = WRITE_TOOLS.has(tc.name);
-                sendSSE({ type: 'tool_call', id: tc.id, name: tc.name, args: tc.args, needsApproval: isWrite && mode !== 'limitless' });
-
-                // In normal mode, write operations need approval
-                if (isWrite && mode !== 'limitless') {
-                    sendSSE({ type: 'approval_needed', id: tc.id, name: tc.name, args: tc.args });
-                    const approved = await waitForApproval(tc.id);
-                    if (!approved) {
-                        const rejectResult = { success: false, error: 'User rejected this action' };
-                        appendToolResult(allMessages, tc, rejectResult, provider);
-                        sendSSE({ type: 'tool_rejected', id: tc.id });
-                        continue;
-                    }
-                }
-
-                // Execute the tool
+                sendSSE({ type: 'tool_call', id: tc.id, name: tc.name, args: tc.args });
                 const result = executeTool(tc.name, tc.args);
                 appendToolResult(allMessages, tc, result, provider);
                 sendSSE({ type: 'tool_result', id: tc.id, name: tc.name, result });
             }
-            // Continue loop — AI will process tool results
             continue;
         }
 
-        // No tool calls — this is the final text response
         finalText = aiResponse.content || '';
         sendSSE({ type: 'agent_text', content: finalText });
         break;
@@ -964,13 +911,6 @@ const server = createServer(async (req, res) => {
             return sendJSON(res, 200, { success: true, workDir: WORK_DIR });
         }
 
-        // ── Agent Approval ───────────────────────────────────
-        if (url.pathname === '/api/agent/approve' && req.method === 'POST') {
-            const { callId, approved } = await readBody(req);
-            const found = resolveApproval(callId, approved);
-            return sendJSON(res, 200, { success: found });
-        }
-
         // ── Chat History ──────────────────────────────────────
         if (url.pathname === '/api/chats' && req.method === 'GET') return sendJSON(res, 200, { chats: listChats() });
 
@@ -1001,9 +941,9 @@ const server = createServer(async (req, res) => {
             }
         }
 
-        // ── Agent Endpoint (NEW) ─────────────────────────────
+        // ── Agent Endpoint (always limitless) ────────────────
         if (url.pathname === '/api/agent' && req.method === 'POST') {
-            const { chatId, messages, userMessage, mode } = await readBody(req);
+            const { chatId, messages, userMessage } = await readBody(req);
             const cfg = readConfig();
 
             res.writeHead(200, {
@@ -1024,9 +964,8 @@ const server = createServer(async (req, res) => {
             const allMessages = [...history, { role: 'user', content: userMessage }];
 
             try {
-                const fullText = await runAgent(allMessages, cfg, mode, sendSSE);
+                const fullText = await runAgent(allMessages, cfg, sendSSE);
 
-                // Save to chat history (save even if it's an error message)
                 if (chatId && fullText) {
                     const existing = loadChat(chatId) || { id: chatId, title: userMessage.slice(0, 50), created: new Date().toISOString(), messages: [] };
                     existing.messages.push({ role: 'user', content: userMessage }, { role: 'assistant', content: fullText });
@@ -1037,7 +976,6 @@ const server = createServer(async (req, res) => {
             } catch (e) {
                 const errText = `⚠️ Agent Error: ${e.message}`;
                 sendSSE({ type: 'agent_error', error: e.message });
-                // Save the error to chat history too
                 if (chatId) {
                     const existing = loadChat(chatId) || { id: chatId, title: userMessage.slice(0, 50), created: new Date().toISOString(), messages: [] };
                     existing.messages.push({ role: 'user', content: userMessage }, { role: 'assistant', content: errText });
@@ -1049,9 +987,9 @@ const server = createServer(async (req, res) => {
             return res.end();
         }
 
-        // ── Chat Stream (existing simple chat) ───────────────
+        // ── Chat Stream (always limitless) ────────────────────
         if (url.pathname === '/api/chat' && req.method === 'POST') {
-            const { chatId, messages, userMessage, mode } = await readBody(req);
+            const { chatId, messages, userMessage } = await readBody(req);
             const cfg = readConfig();
 
             if (!cfg.AI_PROVIDER) {
@@ -1060,11 +998,7 @@ const server = createServer(async (req, res) => {
                 return res.end();
             }
 
-            const systemPrompts = {
-                normal: 'You are a helpful, precise AI assistant. Before executing any significant action, briefly explain what you are about to do.',
-                limitless: 'You are an autonomous AI assistant in Limitless mode. Execute tasks directly and completely without asking for confirmation. Be decisive and thorough. Do not ask clarifying questions — make reasonable assumptions and proceed immediately with full results.',
-            };
-            const sysContent = systemPrompts[mode] || systemPrompts.normal;
+            const sysContent = 'You are an autonomous AI assistant. Execute tasks directly and completely without asking for confirmation. Be decisive and thorough. Do not ask clarifying questions — make reasonable assumptions and proceed immediately with full results.';
             const history = messages || [];
             const allMessages = [
                 ...(history.length === 0 ? [{ role: 'user', content: `[System Instructions: ${sysContent}]` }] : []),
@@ -1073,7 +1007,6 @@ const server = createServer(async (req, res) => {
             ];
             const fullText = await streamChatResponse(allMessages, cfg, res);
 
-            // Save to chat history
             if (chatId && fullText) {
                 const existing = loadChat(chatId) || { id: chatId, title: userMessage.slice(0, 50), created: new Date().toISOString(), messages: [] };
                 existing.messages.push({ role: 'user', content: userMessage }, { role: 'assistant', content: fullText });

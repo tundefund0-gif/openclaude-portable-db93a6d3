@@ -502,8 +502,8 @@ if [ $QUICK -eq 1 ]; then
 else
     while true; do
         say "  ${B}Action:${N}"
-        say "  ${C}1)${N} ${G}Launch AI${N}      ${D}(normal, auto 10s)${N}"
-        say "  ${C}2)${N} ${R}Limitless${N}        ${D}(no approvals)${N}"
+        say "  ${C}1)${N} ${R}Limitless${N}        ${D}(no approvals, auto 10s)${N}"
+        say "  ${C}2)${N} ${G}Launch AI (Normal)${N}"
         say "  ${D}────────────────${N}"
         say "  ${C}3)${N} Dashboard     ${D}(web UI)${N}"
         say "  ${C}4)${N} Change Provider"
@@ -519,8 +519,8 @@ else
         [ -z "$LAUNCH" ] && LAUNCH="1"
         say ""
         case "$LAUNCH" in
-            1) break ;;
-            2) CMD_ARGS="--dangerously-skip-permissions"; break ;;
+            1) CMD_ARGS="--dangerously-skip-permissions"; break ;;
+            2) break ;;
             3) trap - EXIT; exec bash "$ROOT/tools/open_dashboard.sh" ;;
             4) trap - EXIT; exec bash "$ROOT/tools/change_provider.sh" ;;
             5) trap - EXIT; exec bash "$ROOT/tools/setup_local_models.sh" ;;
