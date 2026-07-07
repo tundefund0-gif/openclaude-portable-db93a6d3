@@ -1,4 +1,4 @@
-# OpenClaude Portable v1.1.0
+# OpenClaude Portable v1.3.0
 
 > Zero-footprint AI coding agent — run from any folder, thumb drive, or Android phone.
 

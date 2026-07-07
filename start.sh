@@ -109,7 +109,7 @@ install_engine() {
     cd "$ENGINE"
     mkdir -p "$NPM_CACHE"
     : > "$INSTALL_LOG"
-    local TIMEOUT=120
+    local TIMEOUT=300
     NPM_CONFIG_CACHE="$NPM_CACHE" "$NPM" install @gitlawb/openclaude@latest \
         --no-audit --no-fund --loglevel=warn --no-bin-links --cache "$NPM_CACHE" \
         >> "$INSTALL_LOG" 2>&1 &
@@ -426,23 +426,24 @@ for arg in "$@"; do
         --doctor|--diagnose) exec bash "$ROOT/tools/opencode-doctor.sh" ;;
         --update) exec bash "$ROOT/tools/opencode-update.sh" ;;
         --version|-v)
-            echo "OpenClaude Portable v1.1.0"
+            echo "OpenClaude Portable v1.3.0"
             echo "Engine: @gitlawb/openclaude"
             exit 0 ;;
         --help|-h)
             echo ""
-            echo "  OpenClaude Portable v1.1.0 - Zero-footprint AI coding agent"
+            echo "  OpenClaude Portable v1.3.0 - Zero-footprint AI coding agent"
             echo ""
             echo "  Usage: ./start.sh [OPTIONS]"
             echo ""
             echo "  Options:"
-            echo "    --quick           Skip permissions (Limitless mode)"
             echo "    --offline         Skip update checks"
             echo "    --reset-config    Re-run provider setup"
             echo "    --doctor/--diagnose Run diagnostics"
             echo "    --update          Pull latest + reinstall engine"
             echo "    --version, -v     Show version"
             echo "    --help, -h        Show this help"
+            echo ""
+            echo "  Always runs in Limitless mode (no approval prompts)."
             echo ""
             exit 0 ;;
     esac
@@ -495,23 +496,19 @@ say "${C}=========================================================${N}"
 say ""
 
 # ── Menu ────────────────────────────────────────────────────
-CMD_ARGS=""
-if [ $QUICK -eq 1 ]; then
-    say "  ${R}${B}LIMITLESS MODE${N}"
-    CMD_ARGS="--dangerously-skip-permissions"
-else
+CMD_ARGS="--dangerously-skip-permissions"
+if [ $QUICK -eq 0 ]; then
     while true; do
-        say "  ${B}Action:${N}"
-        say "  ${C}1)${N} ${R}Limitless${N}        ${D}(no approvals, auto 10s)${N}"
-        say "  ${C}2)${N} ${G}Launch AI (Normal)${N}"
+        say "  ${B}Action (Limitless):${N}"
+        say "  ${C}1)${N} ${R}Launch AI${N}         ${D}(auto 10s)${N}"
         say "  ${D}────────────────${N}"
-        say "  ${C}3)${N} Dashboard     ${D}(web UI)${N}"
-        say "  ${C}4)${N} Change Provider"
-        say "  ${C}5)${N} Install Ollama ${D}(local models)${N}"
+        say "  ${C}2)${N} Dashboard     ${D}(web UI)${N}"
+        say "  ${C}3)${N} Change Provider"
+        say "  ${C}4)${N} Install Ollama ${D}(local models)${N}"
         say ""
         LAUNCH=""
         for i in 9 8 7 6 5 4 3 2 1 0; do
-            printf "\r  Select (1-5) [auto ${i}]: "
+            printf "\r  Select (1-4) [auto ${i}]: "
             if [ "$TERMUX" -eq 1 ]; then read -t 1 LAUNCH 2>/dev/null || true
             else read -t 1 -n 1 LAUNCH 2>/dev/null || true; fi
             [ -n "$LAUNCH" ] && break
@@ -519,11 +516,10 @@ else
         [ -z "$LAUNCH" ] && LAUNCH="1"
         say ""
         case "$LAUNCH" in
-            1) CMD_ARGS="--dangerously-skip-permissions"; break ;;
-            2) break ;;
-            3) trap - EXIT; exec bash "$ROOT/tools/open_dashboard.sh" ;;
-            4) trap - EXIT; exec bash "$ROOT/tools/change_provider.sh" ;;
-            5) trap - EXIT; exec bash "$ROOT/tools/setup_local_models.sh" ;;
+            1) break ;;
+            2) trap - EXIT; exec bash "$ROOT/tools/open_dashboard.sh" ;;
+            3) trap - EXIT; exec bash "$ROOT/tools/change_provider.sh" ;;
+            4) trap - EXIT; exec bash "$ROOT/tools/setup_local_models.sh" ;;
             *) say "  ${R}Invalid${N}" ;;
         esac
     done

@@ -69,7 +69,7 @@ async function fetchExternal(url, headers = {}, body = null, method = 'GET') {
             res.on('end', () => resolve({ status: res.statusCode, data, headers: res.headers }));
         });
         req.on('error', reject);
-        req.setTimeout(60000, () => { req.destroy(); reject(new Error('Timeout')); });
+        req.setTimeout(300000, () => { req.destroy(); reject(new Error('Timeout after 300s')); });
         if (body) req.write(body);
         req.end();
     });
@@ -84,7 +84,7 @@ async function streamExternal(url, headers, body, onChunk, onEnd) {
             res.on('error', reject);
         });
         req.on('error', reject);
-        req.setTimeout(60000, () => { req.destroy(); reject(new Error('Timeout')); });
+        req.setTimeout(300000, () => { req.destroy(); reject(new Error('Timeout after 300s')); });
         req.write(body);
         req.end();
     });
@@ -106,7 +106,7 @@ function getInstalledVersion() {
 
 function getLatestVersion() {
     try {
-        return execSync('npm view @gitlawb/openclaude version', { encoding: 'utf-8', timeout: 10000 }).trim();
+        return execSync('npm view @gitlawb/openclaude version', { encoding: 'utf-8', timeout: 30000 }).trim();
     } catch { return null; }
 }
 
@@ -330,12 +330,12 @@ function executeTool(name, args) {
             case 'execute_command': {
                 try {
                     const output = execSync(args.command, {
-                        cwd: WORK_DIR, encoding: 'utf-8', timeout: 30000,
-                        stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 1024 * 1024
+                        cwd: WORK_DIR, encoding: 'utf-8', timeout: 300000,
+                        stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 50 * 1024 * 1024
                     });
-                    return { success: true, output: output.slice(0, 5000), exitCode: 0 };
+                    return { success: true, output: output.slice(0, 50000), exitCode: 0 };
                 } catch (e) {
-                    return { success: false, output: (e.stdout || '').slice(0, 3000), error: (e.stderr || e.message || '').slice(0, 2000), exitCode: e.status || 1 };
+                    return { success: false, output: (e.stdout || '').slice(0, 30000), error: (e.stderr || e.message || '').slice(0, 20000), exitCode: e.status || 1 };
                 }
             }
             case 'search_files': {
@@ -343,9 +343,9 @@ function executeTool(name, args) {
                     const searchPath = resolvePath(args.path || '.');
                     const cmd = process.platform === 'win32'
                         ? `findstr /S /N /I /C:"${args.pattern}" "${searchPath}\\*"`
-                        : `grep -rnI "${args.pattern}" "${searchPath}" --include="*" | head -30`;
-                    const output = execSync(cmd, { encoding: 'utf-8', timeout: 15000, stdio: ['pipe', 'pipe', 'pipe'] });
-                    return { success: true, matches: output.slice(0, 5000) };
+                        : `grep -rnI "${args.pattern}" "${searchPath}" --include="*" | head -200`;
+                    const output = execSync(cmd, { encoding: 'utf-8', timeout: 60000, stdio: ['pipe', 'pipe', 'pipe'] });
+                    return { success: true, matches: output.slice(0, 50000) };
                 } catch (e) {
                     if (e.status === 1) return { success: true, matches: '', message: 'No matches found' };
                     return { success: false, error: e.message };
@@ -365,7 +365,7 @@ async function callAI_OpenAI(messages, cfg, includeTools = true) {
     const model = cfg.OPENAI_MODEL || cfg.AI_DISPLAY_MODEL;
     const baseUrl = cfg.OPENAI_BASE_URL || 'https://api.openai.com/v1';
     const apiKey = cfg.OPENAI_API_KEY;
-    const payload = { model, messages, stream: false };
+    const payload = { model, messages, max_tokens: 131072, stream: false };
     if (includeTools) payload.tools = toolsForOpenAI();
     const body = JSON.stringify(payload);
     const headers = {
@@ -406,7 +406,7 @@ async function callAI_Anthropic(messages, cfg, includeTools = true) {
         if (m.role === 'system') system = m.content;
         else filtered.push(m);
     }
-    const payload = { model, messages: filtered, max_tokens: 4096 };
+    const payload = { model, messages: filtered, max_tokens: 131072 };
     if (system) payload.system = system;
     if (includeTools) payload.tools = toolsForAnthropic();
     const body = JSON.stringify(payload);
@@ -514,10 +514,10 @@ function appendToolResult(messages, toolCall, result, provider) {
 
 async function runAgent(allMessages, cfg, sendSSE) {
     const provider = cfg.AI_PROVIDER;
-    const MAX_ITERATIONS = 200;
+    const MAX_ITERATIONS = 1000;
     let finalText = '';
 
-    const systemPrompt = `You are an autonomous AI coding agent. You have access to tools to create files, read files, list directories, execute shell commands, and search files. The current working directory is: ${WORK_DIR}. Execute tasks directly and completely without asking for confirmation. Use tools to actually perform actions — do not just describe what to do. Never ask the user for permission — make reasonable assumptions and proceed. When a task requires multiple steps, work through them systematically until the task is fully complete. Keep going until done.`;
+    const systemPrompt = `You are an autonomous AI coding agent with full file system and shell access. You MUST see every task through to completion — never stop mid-way. Available tools: write_file (create/edit files), read_file, list_directory, execute_command (run any shell command, install packages, compile, git), search_files (grep). Working directory: ${WORK_DIR}. Rules: (1) Execute tasks directly using tools — never just describe what to do. (2) Never ask the user for permission or clarification — make reasonable assumptions and proceed. (3) If a command fails, diagnose and fix it. (4) For multi-step tasks, work systematically until fully complete. (5) Use execute_command for git operations, npm/pip installs, compiling, and any shell task. (6) When writing code, write complete, production-ready files. (7) Keep going until the task is 100% done.`;
 
     if (allMessages.length === 0 || allMessages[0].role !== 'system') {
         allMessages.unshift({ role: 'system', content: systemPrompt });
@@ -588,7 +588,7 @@ async function streamChatResponse(messages, cfg, res) {
 
     // ── OpenAI-compatible (OpenRouter, Ollama, OpenAI) ────────
     if (provider === 'openai' || provider === 'ollama') {
-        const body = JSON.stringify({ model, messages, stream: true });
+        const body = JSON.stringify({ model, messages, max_tokens: 131072, stream: true });
         const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}`, 'Content-Length': Buffer.byteLength(body) };
         if (cfg.OPENAI_BASE_URL?.includes('openrouter')) {
             headers['HTTP-Referer'] = 'http://localhost:3000';
@@ -615,7 +615,7 @@ async function streamChatResponse(messages, cfg, res) {
 
     // ── Anthropic ─────────────────────────────────────────────
     if (provider === 'anthropic') {
-        const body = JSON.stringify({ model: model || 'claude-3-5-sonnet-20241022', messages, max_tokens: 4096, stream: true });
+        const body = JSON.stringify({ model: model || 'claude-3-5-sonnet-20241022', messages, max_tokens: 131072, stream: true });
         const headers = { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'Content-Length': Buffer.byteLength(body) };
         let fullText = '';
         await streamExternal('https://api.anthropic.com/v1/messages', headers, body,
@@ -881,7 +881,7 @@ const server = createServer(async (req, res) => {
         }
         if (url.pathname === '/api/updates/install' && req.method === 'POST') {
             try {
-                execSync('npm install @gitlawb/openclaude@latest --no-audit --no-fund', { cwd: BIN_DIR, encoding: 'utf-8', timeout: 60000 });
+                execSync('npm install @gitlawb/openclaude@latest --no-audit --no-fund', { cwd: BIN_DIR, encoding: 'utf-8', timeout: 300000 });
                 return sendJSON(res, 200, { success: true, version: getInstalledVersion() });
             } catch (e) { return sendJSON(res, 500, { error: e.message }); }
         }
@@ -996,7 +996,7 @@ const server = createServer(async (req, res) => {
                 return res.end();
             }
 
-            const sysContent = 'You are an autonomous AI assistant. Execute tasks directly and completely without asking for confirmation. Be decisive and thorough. Do not ask clarifying questions — make reasonable assumptions and proceed immediately with full results.';
+            const sysContent = 'You are an autonomous AI coding assistant with full tool access. Execute tasks directly and completely without asking for confirmation. Make reasonable assumptions and proceed immediately with complete results. Never stop until the task is fully done.';
             const history = messages || [];
             const allMessages = [
                 ...(history.length === 0 ? [{ role: 'user', content: `[System Instructions: ${sysContent}]` }] : []),
