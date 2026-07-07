@@ -886,15 +886,13 @@ const server = createServer(async (req, res) => {
             } catch (e) { return sendJSON(res, 500, { error: e.message }); }
         }
 
-        // Launch
+        // Launch (always limitless)
         if (url.pathname === '/api/launch' && req.method === 'POST') {
-            const { mode } = await readBody(req);
-            const quickFlag = mode === 'limitless' ? ' --quick' : '';
             const startScript = join(ROOT_DIR, IS_WIN ? 'START.bat' : 'start.sh');
             if (IS_WIN) {
-                exec(`start "" /B cmd /c "${startScript}"${quickFlag}`);
+                exec(`start "" /B cmd /c "${startScript}" --quick`);
             } else {
-                exec(`bash "${startScript}"${quickFlag} > /dev/null 2>&1 &`);
+                exec(`bash "${startScript}" --quick > /dev/null 2>&1 &`);
             }
             return sendJSON(res, 200, { success: true });
         }

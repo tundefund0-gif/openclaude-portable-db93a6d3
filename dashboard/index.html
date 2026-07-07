@@ -163,7 +163,7 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',system-ui,sans-serif;b
 .mode-pill{padding:4px 14px;border-radius:16px;font-size:0.72rem;font-weight:600;cursor:pointer;color:var(--text2);transition:all 0.2s;border:none;background:transparent;font-family:inherit}
 .mode-pill.active-normal{background:var(--accent);color:#fff}
 .mode-pill.active-limitless{background:var(--error);color:#fff}
-.mode-locked{pointer-events:none;opacity:0.6}
+
 .mode-badge{font-size:0.65rem;padding:2px 8px;border-radius:10px;font-weight:600}
 .mode-badge-normal{background:rgba(59,130,246,0.12);color:var(--accent)}
 .mode-badge-limitless{background:rgba(239,68,68,0.12);color:var(--error)}
@@ -599,8 +599,7 @@ let allModels = [];
 let setupState = { provider:'', key:'', model:'', tier:'free', baseUrl:'' };
 let streamController = null;
 let userScrolled = false;
-let currentMode = 'limitless';
-let modeLocked = false;
+
 let agentMode = false;
 let workDir = '';
 const defaults = { gemini:'gemini-2.0-pro-exp-02-05', anthropic:'claude-3-7-sonnet-20250219', ollama:'llama3.2:3b', openai:'gpt-4o', nvidia:'meta/llama-3.1-70b-instruct', deepseek:'deepseek-v4-flash', lmstudio:'', 'custom-openai':'' };
@@ -730,8 +729,7 @@ async function openChatById(id) {
     renderMessages(chatMessages);
     document.getElementById('topbarTitle').textContent = chat.title;
     // Hide mode toggle for existing chats
-    if (chatMessages.length > 0) { modeLocked = true; document.getElementById('modeToggle').style.display = 'none'; }
-    else { resetMode(); }
+
     loadChatList();
     switchPage('chat');
   } catch {}
@@ -787,7 +785,6 @@ async function startNewChat() {
     document.getElementById('messages').style.display = 'none';
     document.getElementById('welcomeScreen').style.display = 'flex';
     document.getElementById('topbarTitle').textContent = 'New Conversation';
-    resetMode();
     loadChatList();
     switchPage('chat');
     document.getElementById('chatInput').focus();
@@ -840,7 +837,7 @@ async function sendMessage() {
   if (!cfg.AI_PROVIDER) { showToast('Please configure a provider first','error'); switchPage('setup'); return; }
 
   if (!currentChatId) await startNewChat();
-  if (!modeLocked) lockMode();
+
 
   input.value = '';
   input.style.height = 'auto';
@@ -897,7 +894,7 @@ async function sendChatMessage(text, typingEl) {
     streamController = new AbortController();
     const res = await fetch(`${API}/api/chat`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chatId: currentChatId, messages: chatMessages.slice(0, -1), userMessage: text, mode: currentMode }),
+      body: JSON.stringify({ chatId: currentChatId, messages: chatMessages.slice(0, -1), userMessage: text }),
       signal: streamController.signal,
     });
     const reader = res.body.getReader();
@@ -949,7 +946,7 @@ async function sendAgentMessage(text, typingEl) {
     streamController = new AbortController();
     const res = await fetch(`${API}/api/agent`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chatId: currentChatId, messages: chatMessages.slice(0, -1), userMessage: text, mode: currentMode }),
+      body: JSON.stringify({ chatId: currentChatId, messages: chatMessages.slice(0, -1), userMessage: text }),
       signal: streamController.signal,
     });
     const reader = res.body.getReader();
@@ -1538,8 +1535,8 @@ async function toggleOllama(action) {
 }
 
 // ─── Actions ─────────────────────────────────────────────────
-async function launchAI(mode){
-  try{await fetch(`${API}/api/launch`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode})});showToast(`AI launched in ${mode} mode`,'success');}
+async function launchAI(){
+  try{await fetch(`${API}/api/launch`,{method:'POST'});showToast('AI launched (Limitless)','success');}
   catch{showToast('Failed to launch','error');}
 }
 function exportConfig(){window.open(`${API}/api/config/export`,'_blank');}
