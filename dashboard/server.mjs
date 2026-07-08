@@ -943,7 +943,10 @@ const server = createServer(async (req, res) => {
                 const cwd = join(ROOT_DIR, 'engine');
                 const cache = join(DATA_DIR, 'npm-cache');
                 if (!existsSync(cache)) mkdirSync(cache, { recursive: true });
-                const result = execSync(`"${npm}" install @gitlawb/openclaude@latest --no-audit --no-fund --cache "${cache}"`, {
+                // Clear old install and fresh install to ensure version bump
+                const oldDir = join(cwd, 'node_modules', '@gitlawb', 'openclaude');
+                if (existsSync(oldDir)) { rmSync(oldDir, { recursive: true, force: true }); }
+                const result = execSync(`"${npm}" install @gitlawb/openclaude@latest --no-audit --no-fund --no-bin-links --cache "${cache}"`, {
                     cwd, encoding: 'utf-8', timeout: 300000, stdio: ['pipe', 'pipe', 'pipe']
                 });
                 return sendJSON(res, 200, { success: true, version: getInstalledVersion(), output: result.slice(0, 2000) });
