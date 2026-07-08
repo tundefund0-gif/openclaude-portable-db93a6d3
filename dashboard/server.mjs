@@ -106,7 +106,9 @@ function getInstalledVersion() {
 
 function getLatestVersion() {
     try {
-        return execSync('npm view @gitlawb/openclaude version', { encoding: 'utf-8', timeout: 30000 }).trim();
+        const npm = join(BIN_DIR, IS_WIN ? 'npm.cmd' : 'npm');
+        const cwd = join(ROOT_DIR, 'engine');
+        return execSync(`"${npm}" view @gitlawb/openclaude version`, { cwd, encoding: 'utf-8', timeout: 30000 }).trim();
     } catch { return null; }
 }
 
@@ -937,9 +939,18 @@ const server = createServer(async (req, res) => {
         }
         if (url.pathname === '/api/updates/install' && req.method === 'POST') {
             try {
-                execSync('npm install @gitlawb/openclaude@latest --no-audit --no-fund', { cwd: BIN_DIR, encoding: 'utf-8', timeout: 300000 });
-                return sendJSON(res, 200, { success: true, version: getInstalledVersion() });
-            } catch (e) { return sendJSON(res, 500, { error: e.message }); }
+                const npm = join(BIN_DIR, IS_WIN ? 'npm.cmd' : 'npm');
+                const cwd = join(ROOT_DIR, 'engine');
+                const cache = join(DATA_DIR, 'npm-cache');
+                if (!existsSync(cache)) mkdirSync(cache, { recursive: true });
+                const result = execSync(`"${npm}" install @gitlawb/openclaude@latest --no-audit --no-fund --cache "${cache}"`, {
+                    cwd, encoding: 'utf-8', timeout: 300000, stdio: ['pipe', 'pipe', 'pipe']
+                });
+                return sendJSON(res, 200, { success: true, version: getInstalledVersion(), output: result.slice(0, 2000) });
+            } catch (e) {
+                const stderr = e.stderr || e.message || 'Unknown error';
+                return sendJSON(res, 500, { error: stderr.slice(0, 2000) });
+            }
         }
 
         // Launch (always limitless)
