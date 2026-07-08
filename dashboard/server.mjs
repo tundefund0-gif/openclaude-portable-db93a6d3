@@ -644,13 +644,17 @@ function executeTool(name, args) {
     }
 }
 
-// ─── Non-Streaming AI Calls (for tool loop) ──────────────────
+function calculateMaxTokens(messages, requested = 131072, contextLimit = 262144) {
+    const inputTokens = Math.ceil(JSON.stringify(messages).length / 4);
+    return Math.min(requested, Math.max(4096, contextLimit - inputTokens - 1024));
+}
 
 async function callAI_OpenAI(messages, cfg, includeTools = true) {
     const model = cfg.OPENAI_MODEL || cfg.AI_DISPLAY_MODEL;
     const baseUrl = cfg.OPENAI_BASE_URL || 'https://api.openai.com/v1';
     const apiKey = cfg.OPENAI_API_KEY;
-    const payload = { model, messages, max_tokens: 131072, stream: false };
+    const payload = { model, messages, stream: false };
+    payload.max_tokens = calculateMaxTokens(messages);
     if (includeTools) payload.tools = toolsForOpenAI();
     // AutoTune: inject context-aware sampling params
     const lastUserMsg = messages.filter(m => m.role === 'user').pop();
@@ -700,7 +704,8 @@ async function callAI_Anthropic(messages, cfg, includeTools = true) {
         if (m.role === 'system') system = m.content;
         else filtered.push(m);
     }
-    const payload = { model, messages: filtered, max_tokens: 131072 };
+    const payload = { model, messages: filtered };
+    payload.max_tokens = calculateMaxTokens(messages, 131072, 200000);
     if (system) payload.system = system;
     if (includeTools) payload.tools = toolsForAnthropic();
     const body = JSON.stringify(payload);
@@ -734,7 +739,7 @@ async function callAI_Gemini(messages, cfg, includeTools = true) {
             contents.push({ role, parts: m.parts });
         }
     }
-    const payload = { contents };
+    const payload = { contents, generationConfig: { maxOutputTokens: calculateMaxTokens(messages, 8192, 1048576) } };
     if (includeTools) payload.tools = toolsForGemini();
     // Add system instruction
     const sysMsg = messages.find(m => m.role === 'system');
@@ -1011,7 +1016,7 @@ async function streamChatResponse(messages, cfg, res) {
 
     // ── OpenAI-compatible (OpenRouter, Ollama, OpenAI) ────────
     if (provider === 'openai' || provider === 'ollama') {
-        const body = JSON.stringify({ model, messages, max_tokens: 131072, stream: true });
+        const body = JSON.stringify({ model, messages, max_tokens: calculateMaxTokens(messages), stream: true });
         const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}`, 'Content-Length': Buffer.byteLength(body) };
         if (cfg.OPENAI_BASE_URL?.includes('openrouter')) {
             headers['HTTP-Referer'] = 'http://localhost:3000';
@@ -1038,7 +1043,7 @@ async function streamChatResponse(messages, cfg, res) {
 
     // ── Anthropic ─────────────────────────────────────────────
     if (provider === 'anthropic') {
-        const body = JSON.stringify({ model: model || 'claude-3-5-sonnet-20241022', messages, max_tokens: 131072, stream: true });
+        const body = JSON.stringify({ model: model || 'claude-3-5-sonnet-20241022', messages, max_tokens: calculateMaxTokens(messages, 131072, 200000), stream: true });
         const headers = { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'Content-Length': Buffer.byteLength(body) };
         let fullText = '';
         await streamExternal('https://api.anthropic.com/v1/messages', headers, body,
