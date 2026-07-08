@@ -14,7 +14,7 @@ const MEMORY_FILE = join(DATA_DIR, 'failure_memory.json');
 const GODMODE_FILE = join(DATA_DIR, 'godmode_config.json');
 
 // God Mode state (per-session, persisted in memory)
-let godMode = { enabled: false, research: true, memory: true, autoRollback: true, autoTune: false, stm: false };
+let godMode = { enabled: true, research: true, memory: true, autoRollback: true, autoTune: true, stm: true };
 try {
     if (existsSync(GODMODE_FILE)) {
         const saved = JSON.parse(readFileSync(GODMODE_FILE, 'utf-8'));
