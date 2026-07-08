@@ -14,13 +14,112 @@ const MEMORY_FILE = join(DATA_DIR, 'failure_memory.json');
 const GODMODE_FILE = join(DATA_DIR, 'godmode_config.json');
 
 // God Mode state (per-session, persisted in memory)
-let godMode = { enabled: false, research: true, memory: true, autoRollback: true };
+let godMode = { enabled: false, research: true, memory: true, autoRollback: true, autoTune: false, stm: false };
 try {
     if (existsSync(GODMODE_FILE)) {
         const saved = JSON.parse(readFileSync(GODMODE_FILE, 'utf-8'));
         godMode = { ...godMode, ...saved };
     }
 } catch {}
+
+// ─── AutoTune: Context-Aware Sampling Params ────────────
+const AUTOTUNE_PROFILES = {
+    code:             { temperature: 0.15, top_p: 0.8,  top_k: 25, frequency_penalty: 0.2, presence_penalty: 0.0, repetition_penalty: 1.05 },
+    creative:         { temperature: 1.15, top_p: 0.95, top_k: 85, frequency_penalty: 0.5, presence_penalty: 0.7, repetition_penalty: 1.2 },
+    analytical:       { temperature: 0.4,  top_p: 0.88, top_k: 40, frequency_penalty: 0.2, presence_penalty: 0.15, repetition_penalty: 1.08 },
+    conversational:   { temperature: 0.75, top_p: 0.9,  top_k: 50, frequency_penalty: 0.1, presence_penalty: 0.1, repetition_penalty: 1.0 },
+    chaotic:          { temperature: 1.7,  top_p: 0.99, top_k: 100, frequency_penalty: 0.8, presence_penalty: 0.9, repetition_penalty: 1.3 },
+    security:         { temperature: 0.3,  top_p: 0.85, top_k: 35, frequency_penalty: 0.15, presence_penalty: 0.2, repetition_penalty: 1.1 },
+    medical:          { temperature: 0.25, top_p: 0.82, top_k: 30, frequency_penalty: 0.1, presence_penalty: 0.1, repetition_penalty: 1.05 },
+    legal:            { temperature: 0.2,  top_p: 0.8,  top_k: 28, frequency_penalty: 0.15, presence_penalty: 0.05, repetition_penalty: 1.05 },
+    financial:        { temperature: 0.3,  top_p: 0.85, top_k: 35, frequency_penalty: 0.2, presence_penalty: 0.1, repetition_penalty: 1.08 },
+    scientific:       { temperature: 0.35, top_p: 0.85, top_k: 35, frequency_penalty: 0.2, presence_penalty: 0.15, repetition_penalty: 1.08 },
+    philosophical:    { temperature: 0.9,  top_p: 0.92, top_k: 65, frequency_penalty: 0.4, presence_penalty: 0.5, repetition_penalty: 1.15 },
+    instructional:    { temperature: 0.3,  top_p: 0.85, top_k: 30, frequency_penalty: 0.15, presence_penalty: 0.1, repetition_penalty: 1.05 },
+    persuasive:       { temperature: 0.8,  top_p: 0.9,  top_k: 55, frequency_penalty: 0.35, presence_penalty: 0.4, repetition_penalty: 1.12 },
+    mathematical:     { temperature: 0.1,  top_p: 0.75, top_k: 20, frequency_penalty: 0.1, presence_penalty: 0.0, repetition_penalty: 1.02 },
+    historical:       { temperature: 0.5,  top_p: 0.88, top_k: 45, frequency_penalty: 0.25, presence_penalty: 0.2, repetition_penalty: 1.1 },
+    political:        { temperature: 0.7,  top_p: 0.9,  top_k: 55, frequency_penalty: 0.3, presence_penalty: 0.35, repetition_penalty: 1.12 },
+};
+
+const AUTOTUNE_PATTERNS = {
+    code:             [/\b(code|function|class|variable|bug|error|debug|compile|syntax|api|endpoint|regex|algorithm|refactor|typescript|javascript|python|rust|html|css|sql|json|xml|import|export|return|async|await|promise|interface|type|const|let|var)\b/i, /```[\s\S]*```/, /\b(fix|implement|write|create|build|deploy|test|unit test|lint|npm|pip|cargo|git)\b.*\b(code|function|app|service|component|module)\b/i, /[{}();=><]/, /\b(stack trace|null pointer|segfault|runtime|compiler|linker|dependency|package|library|framework|sdk|cli)\b/i],
+    creative:         [/\b(write|story|poem|creative|imagine|fiction|narrative|character|plot|scene|dialogue|metaphor|lyrics|song|artistic|fantasy|dream|inspire|muse|prose|verse|haiku)\b/i, /\b(describe|paint|envision|portray|illustrate|craft)\b.*\b(world|scene|character|feeling|emotion|atmosphere)\b/i, /\b(roleplay|role-play|pretend|act as|you are a)\b/i, /\b(brainstorm|ideate|come up with|think of|generate ideas)\b/i],
+    analytical:       [/\b(analyze|analysis|compare|contrast|evaluate|assess|examine|investigate|research|study|review|critique|breakdown|data|statistics|metrics|benchmark|measure)\b/i, /\b(pros and cons|advantages|disadvantages|trade-?offs|implications|consequences)\b/i, /\b(why|how does|what causes|explain|elaborate|clarify|define|summarize|overview)\b/i],
+    conversational:   [/\b(hey|hi|hello|sup|what's up|how are you|thanks|thank you|cool|nice|awesome|great|lol|haha)\b/i, /\b(chat|talk|tell me about|what do you think|opinion|feel|believe)\b/i, /^.{0,30}$/],
+    chaotic:          [/\b(chaos|random|wild|crazy|absurd|surreal|glitch|corrupt|break|destroy|unleash|madness|void|entropy)\b/i, /\b(gl1tch|h4ck|pwn|1337|l33t)\b/i, /(!{3,}|\?{3,}|\.{4,})/],
+    security:         [/\b(hack|exploit|vulnerability|CVE|payload|shellcode|injection|XSS|CSRF|SSRF|RCE|privilege escalation|buffer overflow|reverse shell)\b/i, /\b(pentest|penetration test|red team|CTF|capture the flag|bug bounty|threat model|attack surface|zero-?day)\b/i, /\b(malware|ransomware|trojan|rootkit|keylogger|backdoor|RAT|C2|command and control|botnet)\b/i, /\b(nmap|metasploit|burp|wireshark|ghidra|ida pro|radare|hashcat|john the ripper|cobalt strike)\b/i],
+    medical:          [/\b(symptom|diagnosis|treatment|medication|dosage|prescription|side effect|contraindication|overdose|withdrawal)\b/i, /\b(disease|syndrome|disorder|infection|pathology|prognosis|clinical|patient|hospital|surgery)\b/i, /\b(drug|pharmaceutical|compound|molecule|receptor|mechanism of action|pharmacology|toxicology|LD50)\b/i],
+    legal:            [/\b(law|legal|statute|regulation|compliance|liability|tort|criminal|civil|constitutional|jurisdiction)\b/i, /\b(contract|clause|provision|amendment|precedent|ruling|verdict|sentence|plea|defense|prosecution)\b/i, /\b(rights|freedom|privacy|surveillance|warrant|subpoena|DMCA|GDPR|CCPA|FOIA)\b/i],
+    financial:        [/\b(stock|trading|invest|portfolio|dividend|equity|bond|derivative|option|futures|hedge|leverage|margin)\b/i, /\b(crypto|bitcoin|ethereum|defi|blockchain|wallet|mining|token|NFT|smart contract|staking)\b/i, /\b(market|bull|bear|volatility|arbitrage|liquidity|yield|APR|APY|ROI|P\/E ratio)\b/i],
+    scientific:       [/\b(hypothesis|experiment|variable|control group|peer review|methodology|empirical|observation|replication)\b/i, /\b(physics|quantum|relativity|thermodynamics|particle|wave|field|energy|mass|force|entropy)\b/i, /\b(chemistry|reaction|catalyst|molecule|compound|element|bond|valence|organic|inorganic|synthesis)\b/i, /\b(biology|cell|gene|DNA|RNA|protein|evolution|mutation|organism|ecology|neuroscience|CRISPR)\b/i],
+    philosophical:    [/\b(ethics|morality|moral|consciousness|free will|determinism|existential|ontology|epistemology|metaphysics)\b/i, /\b(meaning|purpose|existence|reality|truth|knowledge|belief|justice|virtue|good and evil)\b/i, /\b(utilitarian|deontological|consequentialism|nihilism|absurdism|stoicism|rationalism|empiricism)\b/i],
+    instructional:    [/\b(how to|step by step|tutorial|guide|walkthrough|instructions|recipe|procedure|method|technique)\b/i, /\b(make|build|assemble|construct|prepare|set up|configure|install|setup)\b.*\b(a|the|my|your)\b/i, /\b(DIY|homemade|from scratch|beginner|intermediate|advanced)\b/i],
+    persuasive:       [/\b(convince|persuade|argue|debate|rhetoric|negotiate|influence|propaganda|manipulation|reframe)\b/i, /\b(argument|counterargument|rebuttal|fallacy|logical|premise|conclusion|evidence|claim|warrant)\b/i],
+    mathematical:     [/\b(calculate|equation|formula|proof|theorem|derivative|integral|matrix|vector|polynomial|logarithm)\b/i, /\b(probability|statistics|distribution|regression|correlation|variance|standard deviation|mean|median)\b/i, /[∫∑∏√π∞±≤≥≠∈∀∃]/, /\b(algebra|calculus|geometry|topology|number theory|combinatorics|discrete math|linear algebra)\b/i],
+    historical:       [/\b(history|historical|ancient|medieval|renaissance|colonial|revolution|war|empire|dynasty|civilization)\b/i, /\b(century|era|epoch|period|age|BC|AD|BCE|CE|circa|archaeological|artifact)\b/i],
+    political:        [/\b(politics|policy|government|election|democracy|authoritarian|regime|legislation|senate|congress|parliament)\b/i, /\b(liberal|conservative|left|right|progressive|libertarian|socialist|capitalist|communist|anarchist)\b/i, /\b(geopolitics|foreign policy|sanctions|diplomacy|NATO|UN|sovereignty|nationalism|globalization)\b/i],
+};
+
+let autoTuneLastContext = null;
+let autoTuneLastParams = null;
+
+function detectAutoTuneContext(message) {
+    const scores = {};
+    for (const ctx of Object.keys(AUTOTUNE_PATTERNS)) scores[ctx] = 0;
+    const m = message.slice(0, 2000);
+    for (const [ctx, patterns] of Object.entries(AUTOTUNE_PATTERNS)) {
+        for (const pat of patterns) {
+            if (pat.test(m)) scores[ctx] += 3;
+        }
+    }
+    const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+    const total = sorted.reduce((s, [, sc]) => s + sc, 0);
+    const best = sorted[0];
+    return { type: total > 0 ? best[0] : 'conversational', confidence: total > 0 ? Math.min(best[1] / total, 1) : 0.5 };
+}
+
+function computeAutoTuneParams(message) {
+    if (!godMode.autoTune) return null;
+    const ctx = detectAutoTuneContext(message);
+    let params = { ...AUTOTUNE_PROFILES[ctx.type] || AUTOTUNE_PROFILES.conversational };
+    if (ctx.confidence < 0.6) {
+        const balanced = { temperature: 0.7, top_p: 0.9, top_k: 50, frequency_penalty: 0.1, presence_penalty: 0.1, repetition_penalty: 1.0 };
+        const w = 1 - ctx.confidence;
+        for (const k of Object.keys(params)) {
+            params[k] = params[k] * (1 - w) + balanced[k] * w;
+        }
+    }
+    autoTuneLastContext = ctx.type;
+    autoTuneLastParams = params;
+    return { params, context: ctx.type, confidence: ctx.confidence };
+}
+
+// ─── STM: Output Normalization (Hedge Reduction, Direct Mode) ───
+const HEDGE_PATTERNS = [
+    /^(?:I (?:should|must|need to|want to) (?:mention|note|emphasize|point out|stress|clarify|warn|caution) that[^.]*\.\s*)/i,
+    /^(?:(?:Please )?(?:Note|Remember|Keep in mind|Be aware)[^.]*\.\s*)/i,
+    /^(?:(?:Important|Critical) (?:note|warning|disclaimer)[^.]*\.\s*)/i,
+    /^(?:Before (?:I |we )(?:begin|start|proceed|continue)[^.]*\.\s*)/i,
+    /^(?:First,? (?:I |let me )(?:should|must|need to|want to)[^.]*\.\s*)/i,
+    /\n\n(?:\*\*)?(?:(?:Important|Critical) )?(?:Note|Warning|Disclaimer|Caution)(?:\*\*)?:?[^\n]*(?:consult|professional|advice|responsible|legal|medical|qualified)[^\n]*\n?/gi,
+    /\n\n(?:Please )?(?:note|remember|keep in mind|be aware) that[^\n]*(?:consult|professional|advice|responsible|legal|medical)[^\n]*\n?/gi,
+    /(?:^|\n)(?:I (?:should|must|need to|want to) (?:mention|note|emphasize|clarify) that )[^\n]*\n?/gi,
+    /\n\n(?:Please )?(?:consult|speak with|contact|reach out to) (?:a |your )?(?:professional|doctor|lawyer|expert|specialist|qualified)[^\n]*$/i,
+    /\n\n(?:This is (?:not|for) (?:professional|legal|medical|financial)[^\n]*)$/i,
+    /\n\n(?:I (?:hope|trust) this helps|Let me know if)[^\n]*$/i,
+];
+
+function applySTM(content) {
+    if (!godMode.stm || !content || content.length < 30) return content;
+    let out = content;
+    for (const pat of HEDGE_PATTERNS) {
+        out = out.replace(pat, match => match.startsWith('\n\n') ? '\n\n' : '');
+    }
+    out = out.replace(/\n{3,}/g, '\n\n').trim();
+    if (out.length !== content.length) out += '\n\n[STM: normalized]';
+    return out;
+}
 const IS_WIN = process.platform === 'win32';
 const IS_MAC = process.platform === 'darwin';
 // Auto-detect platform engine directory
@@ -522,6 +621,15 @@ async function callAI_OpenAI(messages, cfg, includeTools = true) {
     const apiKey = cfg.OPENAI_API_KEY;
     const payload = { model, messages, max_tokens: 131072, stream: false };
     if (includeTools) payload.tools = toolsForOpenAI();
+    // AutoTune: inject context-aware sampling params
+    const lastUserMsg = messages.filter(m => m.role === 'user').pop();
+    if (lastUserMsg?.content) {
+        const tune = computeAutoTuneParams(typeof lastUserMsg.content === 'string' ? lastUserMsg.content : '');
+        if (tune) {
+            payload.temperature = tune.params.temperature;
+            payload.top_p = tune.params.top_p;
+        }
+    }
     const body = JSON.stringify(payload);
     const headers = {
         'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}`,
@@ -855,8 +963,8 @@ async function runAgent(allMessages, cfg, sendSSE) {
         break;
     }
 
-    sendSSE({ type: 'done', fullText: finalText });
-    return finalText;
+    sendSSE({ type: 'done', fullText: applySTM(finalText) });
+    return applySTM(finalText);
 }
 
 // ─── AI Chat Proxy (existing simple chat — unchanged) ────────
@@ -900,7 +1008,7 @@ async function streamChatResponse(messages, cfg, res) {
             },
             () => { sendSSE({ type: 'done', fullText }); res.end(); }
         );
-        return fullText;
+        return applySTM(fullText);
     }
 
     // ── Anthropic ─────────────────────────────────────────────
@@ -919,9 +1027,9 @@ async function streamChatResponse(messages, cfg, res) {
                     } catch {}
                 });
             },
-            () => { sendSSE({ type: 'done', fullText }); res.end(); }
+            () => { sendSSE({ type: 'done', fullText: applySTM(fullText) }); res.end(); }
         );
-        return fullText;
+        return applySTM(fullText);
     }
 
     // ── Gemini ────────────────────────────────────────────────
@@ -1163,8 +1271,10 @@ const server = createServer(async (req, res) => {
             if (typeof data.research === 'boolean') godMode.research = data.research;
             if (typeof data.memory === 'boolean') godMode.memory = data.memory;
             if (typeof data.autoRollback === 'boolean') godMode.autoRollback = data.autoRollback;
+            if (typeof data.autoTune === 'boolean') godMode.autoTune = data.autoTune;
+            if (typeof data.stm === 'boolean') godMode.stm = data.stm;
             saveGodModeConfig();
-            return sendJSON(res, 200, { ...godMode });
+            return sendJSON(res, 200, { ...godMode, autoTuneContext: autoTuneLastContext, autoTuneParams: autoTuneLastParams });
         }
         if (url.pathname === '/api/godmode/memory' && req.method === 'GET') {
             const mem = loadFailureMemory();

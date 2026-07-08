@@ -432,6 +432,13 @@ select{appearance:none;cursor:pointer;background-image:url("data:image/svg+xml,%
             <label><span class="agent-switch"><input type="checkbox" id="agentToggle" checked onchange="toggleAgent(this.checked)"><span class="agent-slider"></span></span> Agent Mode</label>
             <label style="margin-left:8px"><span class="agent-switch"><input type="checkbox" id="godModeToggle" onchange="toggleGodMode(this.checked)"><span class="agent-slider godmode-slider"></span></span> God Mode</label>
           </div>
+          <div id="godModeSubToggles" style="display:none;gap:6px;margin-top:6px;flex-wrap:wrap">
+            <label style="font-size:0.72rem;color:var(--text2);display:inline-flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="atToggle" onchange="updateGodModeConfig()" style="accent-color:var(--accent)"> AutoTune</label>
+            <label style="font-size:0.72rem;color:var(--text2);display:inline-flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="stmToggle" onchange="updateGodModeConfig()" style="accent-color:var(--accent)"> STM</label>
+            <label style="font-size:0.72rem;color:var(--text2);display:inline-flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="researchToggle" onchange="updateGodModeConfig()" checked style="accent-color:var(--accent)"> Research</label>
+            <label style="font-size:0.72rem;color:var(--text2);display:inline-flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="memoryToggle" onchange="updateGodModeConfig()" checked style="accent-color:var(--accent)"> Memory</label>
+            <label style="font-size:0.72rem;color:var(--text2);display:inline-flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="rollbackToggle" onchange="updateGodModeConfig()" checked style="accent-color:var(--accent)"> Rollback</label>
+          </div>
         </div>
         <div class="input-bar">
           <textarea id="chatInput" placeholder="Message AI..." rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
@@ -626,8 +633,8 @@ const providerNames = { openrouter:'OpenRouter', gemini:'Gemini', anthropic:'Cla
   if (savedAgent === 'true') { agentMode = true; document.getElementById('agentToggle').checked = true; document.getElementById('workdirBar').style.display = 'flex'; }
   // Load God Mode state
   const savedGod = localStorage.getItem('godMode');
-  if (savedGod === 'true') { godModeEnabled = true; document.getElementById('godModeToggle').checked = true; }
-  try { const r = await fetch(`${API}/api/godmode`); const g = await r.json(); if (g.enabled) { godModeEnabled = true; document.getElementById('godModeToggle').checked = true; } } catch {}
+  if (savedGod === 'true') { godModeEnabled = true; document.getElementById('godModeToggle').checked = true; document.getElementById('godModeSubToggles').style.display = 'flex'; }
+  try { const r = await fetch(`${API}/api/godmode`); const g = await r.json(); if (g.enabled) { godModeEnabled = true; document.getElementById('godModeToggle').checked = true; document.getElementById('godModeSubToggles').style.display = 'flex'; } if (g.autoTune) document.getElementById('atToggle').checked = true; if (g.stm) document.getElementById('stmToggle').checked = true; if (g.research === false) document.getElementById('researchToggle').checked = false; if (g.memory === false) document.getElementById('memoryToggle').checked = false; if (g.autoRollback === false) document.getElementById('rollbackToggle').checked = false; } catch {}
   // Restore last active chat on refresh
   const lastChatId = localStorage.getItem('activeChatId');
   if (lastChatId) { try { await openChatById(lastChatId); } catch {} }
@@ -818,10 +825,27 @@ let godModeEnabled = false;
 async function toggleGodMode(enabled) {
   godModeEnabled = enabled;
   localStorage.setItem('godMode', enabled);
-  try {
-    await fetch(`${API}/api/godmode`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ enabled }) });
-  } catch {}
+  document.getElementById('godModeSubToggles').style.display = enabled ? 'flex' : 'none';
+  await updateGodModeConfig();
   showToast(`God Mode ${enabled ? 'activated 🚀' : 'deactivated'}`, 'info');
+}
+async function updateGodModeConfig() {
+  const enabled = document.getElementById('godModeToggle').checked;
+  const body = {
+    enabled,
+    autoTune: document.getElementById('atToggle').checked,
+    stm: document.getElementById('stmToggle').checked,
+    research: document.getElementById('researchToggle').checked,
+    memory: document.getElementById('memoryToggle').checked,
+    autoRollback: document.getElementById('rollbackToggle').checked,
+  };
+  try {
+    const r = await fetch(`${API}/api/godmode`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+    const d = await r.json();
+    if (d.autoTuneContext) {
+      document.getElementById('chatInput').placeholder = `[${d.autoTuneContext}] Ask agent to create files, run commands...`;
+    }
+  } catch {}
 }
 
 async function loadWorkDir() {
