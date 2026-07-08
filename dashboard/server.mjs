@@ -243,14 +243,14 @@ async function fetchExternal(url, headers = {}, body = null, method = 'GET', att
                 reject(err);
             }
         });
-        req.setTimeout(300000, () => { req.destroy(); reject(new Error('Timeout after 300s')); });
+        req.setTimeout(3600000, () => { req.destroy(); reject(new Error('Timeout after 3600s')); });
         if (body) req.write(body);
         req.end();
     });
 }
 
 async function streamExternal(url, headers, body, onChunk, onEnd, attempt = 1) {
-    const maxAttempts = 3;
+    const maxAttempts = 10;
     const mod = await import(url.startsWith('https') ? 'https' : 'http');
     return new Promise((resolve, reject) => {
         const req = mod.request(url, { method: 'POST', headers, rejectUnauthorized: process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0' }, res => {
@@ -260,7 +260,7 @@ async function streamExternal(url, headers, body, onChunk, onEnd, attempt = 1) {
         });
         req.on('error', (err) => {
             if (isSSLError(err) && attempt < maxAttempts) {
-                const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
+                const delay = Math.min(500 * Math.pow(2, attempt), 30000);
                 setTimeout(() => {
                     streamExternal(url, headers, body, onChunk, onEnd, attempt + 1).then(resolve).catch(reject);
                 }, delay);
@@ -268,7 +268,7 @@ async function streamExternal(url, headers, body, onChunk, onEnd, attempt = 1) {
                 reject(err);
             }
         });
-        req.setTimeout(300000, () => { req.destroy(); reject(new Error('Timeout after 300s')); });
+        req.setTimeout(3600000, () => { req.destroy(); reject(new Error('Timeout after 3600s')); });
         req.write(body);
         req.end();
     });
@@ -463,7 +463,7 @@ const TOOL_DEFS = [
             type: 'object',
             properties: {
                 command: { type: 'string', description: 'The shell command to execute' },
-                timeout: { type: 'number', description: 'Optional timeout in seconds (default: 300, max: 1800)' }
+                timeout: { type: 'number', description: 'Optional timeout in seconds (default: 600, max: 36000)' }
             },
             required: ['command']
         }
@@ -576,14 +576,14 @@ function executeTool(name, args) {
             }
             case 'execute_command': {
                 try {
-                    const cmdTimeout = Math.min(Math.max((args.timeout || 300) * 1000, 5000), 1800000);
+                    const cmdTimeout = Math.min(Math.max((args.timeout || 600) * 1000, 5000), 36000000);
                     const output = execSync(args.command, {
                         cwd: WORK_DIR, encoding: 'utf-8', timeout: cmdTimeout,
-                        stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 50 * 1024 * 1024
+                        stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 500 * 1024 * 1024
                     });
-                    return { success: true, output: output.slice(0, 50000), exitCode: 0, duration: Math.round(cmdTimeout / 1000) };
+                    return { success: true, output: output.slice(0, 200000), exitCode: 0, duration: Math.round(cmdTimeout / 1000) };
                 } catch (e) {
-                    return { success: false, output: (e.stdout || '').slice(0, 30000), error: (e.stderr || e.message || '').slice(0, 20000), exitCode: e.status || 1 };
+                    return { success: false, output: (e.stdout || '').slice(0, 100000), error: (e.stderr || e.message || '').slice(0, 100000), exitCode: e.status || 1 };
                 }
             }
             case 'search_files': {
@@ -592,8 +592,8 @@ function executeTool(name, args) {
                     const cmd = process.platform === 'win32'
                         ? `findstr /S /N /I /C:"${args.pattern}" "${searchPath}\\*"`
                         : `grep -rnI "${args.pattern}" "${searchPath}" --include="*" | head -200`;
-                    const output = execSync(cmd, { encoding: 'utf-8', timeout: 60000, stdio: ['pipe', 'pipe', 'pipe'] });
-                    return { success: true, matches: output.slice(0, 50000) };
+                    const output = execSync(cmd, { encoding: 'utf-8', timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] });
+                    return { success: true, matches: output.slice(0, 200000) };
                 } catch (e) {
                     if (e.status === 1) return { success: true, matches: '', message: 'No matches found' };
                     return { success: false, error: e.message };
@@ -785,12 +785,12 @@ function isSSLError(err) {
 }
 
 async function callAIWithRetry(messages, cfg, includeTools, sendSSE, attempt = 1) {
-    const MAX_RETRIES = 3;
+    const MAX_RETRIES = 10;
     try {
         return await callAI(messages, cfg, includeTools);
     } catch (e) {
         if (isSSLError(e) && attempt <= MAX_RETRIES) {
-            const delay = Math.min(1000 * Math.pow(2, attempt), 15000);
+            const delay = Math.min(500 * Math.pow(2, attempt), 30000);
             sendSSE({ type: 'agent_reasoning', content: `⚠️ Network/SSL error (attempt ${attempt}/${MAX_RETRIES}), retrying in ${delay/1000}s...`, iteration: 1 });
             await new Promise(r => setTimeout(r, delay));
             return callAIWithRetry(messages, cfg, includeTools, sendSSE, attempt + 1);
@@ -803,7 +803,7 @@ async function callAIWithRetry(messages, cfg, includeTools, sendSSE, attempt = 1
 
 async function runAgent(allMessages, cfg, sendSSE) {
     const provider = cfg.AI_PROVIDER;
-    const MAX_ITERATIONS = 1000;
+    const MAX_ITERATIONS = 10000;
     let finalText = '';
     let lastCommitHash = '';
     let taskAttempted = '';
@@ -908,7 +908,7 @@ async function runAgent(allMessages, cfg, sendSSE) {
 
                 let result;
                 let retries = 0;
-                const MAX_RETRIES = 2;
+                const MAX_RETRIES = 5;
                 while (retries <= MAX_RETRIES) {
                     try {
                         result = executeTool(tc.name, tc.args);
@@ -1315,7 +1315,7 @@ const server = createServer(async (req, res) => {
                 const oldDir = join(cwd, 'node_modules', '@gitlawb', 'openclaude');
                 if (existsSync(oldDir)) { rmSync(oldDir, { recursive: true, force: true }); }
                 const result = execSync(`"${npm}" install @gitlawb/openclaude@latest --no-audit --no-fund --no-bin-links --cache "${cache}"`, {
-                    cwd, encoding: 'utf-8', timeout: 300000, stdio: ['pipe', 'pipe', 'pipe']
+                    cwd, encoding: 'utf-8', timeout: 3600000, stdio: ['pipe', 'pipe', 'pipe']
                 });
                 return sendJSON(res, 200, { success: true, version: getInstalledVersion(), output: result.slice(0, 2000) });
             } catch (e) {
