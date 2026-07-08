@@ -18,6 +18,12 @@ const ARCH_DIR = process.arch === 'x64' || process.arch === 'amd64' ? 'x64' : 'a
 const BIN_DIR = join(ROOT_DIR, 'engine', `node-${PLATFORM_DIR}-${ARCH_DIR}`, 'bin');
 const PORT = process.env.PORT || 3000;
 const IS_TERMUX = process.env.PREFIX && process.platform === 'linux' && process.arch === 'arm64';
+
+// Allow SSL override via env (for corporate proxies, self-signed certs, etc.)
+if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0') {
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+    console.log('  [i] TLS verification disabled (NODE_TLS_REJECT_UNAUTHORIZED=0)');
+}
 let WORK_DIR = ROOT_DIR; // Default working directory
 
 // ─── Helpers ─────────────────────────────────────────────────
@@ -59,16 +65,26 @@ function readBodyRaw(req) {
     });
 }
 
-async function fetchExternal(url, headers = {}, body = null, method = 'GET') {
+async function fetchExternal(url, headers = {}, body = null, method = 'GET', attempt = 1) {
+    const maxAttempts = 3;
     const mod = await import(url.startsWith('https') ? 'https' : 'http');
     return new Promise((resolve, reject) => {
-        const opts = { method, headers };
+        const opts = { method, headers, rejectUnauthorized: process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0' };
         const req = mod.request(url, opts, res => {
             let data = '';
             res.on('data', chunk => data += chunk);
             res.on('end', () => resolve({ status: res.statusCode, data, headers: res.headers }));
         });
-        req.on('error', reject);
+        req.on('error', (err) => {
+            if (isSSLError(err) && attempt < maxAttempts) {
+                const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
+                setTimeout(() => {
+                    fetchExternal(url, headers, body, method, attempt + 1).then(resolve).catch(reject);
+                }, delay);
+            } else {
+                reject(err);
+            }
+        });
         req.setTimeout(300000, () => { req.destroy(); reject(new Error('Timeout after 300s')); });
         if (body) req.write(body);
         req.end();
@@ -78,7 +94,7 @@ async function fetchExternal(url, headers = {}, body = null, method = 'GET') {
 async function streamExternal(url, headers, body, onChunk, onEnd) {
     const mod = await import(url.startsWith('https') ? 'https' : 'http');
     return new Promise((resolve, reject) => {
-        const req = mod.request(url, { method: 'POST', headers }, res => {
+        const req = mod.request(url, { method: 'POST', headers, rejectUnauthorized: process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0' }, res => {
             res.on('data', chunk => onChunk(chunk.toString()));
             res.on('end', () => { onEnd(); resolve(); });
             res.on('error', reject);
@@ -550,6 +566,32 @@ function appendToolResult(messages, toolCall, result, provider) {
     }
 }
 
+// ─── SSL/Network error detection ──────────────────────────
+function isSSLError(err) {
+    const msg = (err && (err.message || err.code || '').toLowerCase()) || '';
+    return msg.includes('ssl') || msg.includes('tls') || msg.includes('bad record') ||
+           msg.includes('certificate') || msg.includes('econnrefused') ||
+           msg.includes('econnreset') || msg.includes('enotfound') ||
+           msg.includes('etimedout') || msg.includes('eai_again') ||
+           msg.includes('socket hang up') || msg.includes('network') ||
+           msg.includes('fetch failed') || msg.includes('unreachable');
+}
+
+async function callAIWithRetry(messages, cfg, includeTools, sendSSE, attempt = 1) {
+    const MAX_RETRIES = 3;
+    try {
+        return await callAI(messages, cfg, includeTools);
+    } catch (e) {
+        if (isSSLError(e) && attempt <= MAX_RETRIES) {
+            const delay = Math.min(1000 * Math.pow(2, attempt), 15000);
+            sendSSE({ type: 'agent_reasoning', content: `⚠️ Network/SSL error (attempt ${attempt}/${MAX_RETRIES}), retrying in ${delay/1000}s...`, iteration: 1 });
+            await new Promise(r => setTimeout(r, delay));
+            return callAIWithRetry(messages, cfg, includeTools, sendSSE, attempt + 1);
+        }
+        throw e;
+    }
+}
+
 // ─── Agentic Loop ────────────────────────────────────────────
 
 async function runAgent(allMessages, cfg, sendSSE) {
@@ -568,19 +610,29 @@ async function runAgent(allMessages, cfg, sendSSE) {
 
         let aiResponse;
         try {
-            aiResponse = await callAI(allMessages, cfg, true);
+            aiResponse = await callAIWithRetry(allMessages, cfg, true, sendSSE);
         } catch (e) {
             if (iter === 0) {
                 try {
-                    sendSSE({ type: 'agent_reasoning', content: 'Tool calling not supported by this model, falling back to chat mode...', iteration: 1 });
-                    aiResponse = await callAI(allMessages, cfg, false);
+                    if (isSSLError(e)) {
+                        sendSSE({ type: 'agent_reasoning', content: '⚠️ Network/SSL error. Trying without tools (fallback mode)...', iteration: 1 });
+                    } else {
+                        sendSSE({ type: 'agent_reasoning', content: 'Tool calling not supported by this model, falling back to chat mode...', iteration: 1 });
+                    }
+                    aiResponse = await callAIWithRetry(allMessages, cfg, false, sendSSE);
                 } catch (e2) {
-                    sendSSE({ type: 'agent_error', error: e2.message });
-                    return `⚠️ Agent Error: ${e2.message}`;
+                    const errMsg = isSSLError(e2)
+                        ? '⚠️ Network/SSL Error: Check your internet connection or proxy settings. If using a corporate network, try setting NODE_TLS_REJECT_UNAUTHORIZED=0'
+                        : `⚠️ Agent Error: ${e2.message}`;
+                    sendSSE({ type: 'agent_error', error: errMsg });
+                    return errMsg;
                 }
             } else {
-                sendSSE({ type: 'agent_error', error: e.message });
-                return `⚠️ Agent Error: ${e.message}`;
+                const errMsg = isSSLError(e)
+                    ? '⚠️ Network/SSL Error: Connection interrupted. The agent will continue when connection is restored.'
+                    : `⚠️ Agent Error: ${e.message}`;
+                sendSSE({ type: 'agent_error', error: errMsg });
+                return errMsg;
             }
         }
 
