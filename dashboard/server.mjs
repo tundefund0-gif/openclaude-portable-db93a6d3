@@ -5,11 +5,22 @@ import { fileURLToPath } from 'url';
 import { execSync, exec } from 'child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT_DIR = join(__dirname, '..'); // Portable_AI_USB root
+const ROOT_DIR = join(__dirname, '..');
 const DATA_DIR = join(ROOT_DIR, 'data');
 const ENV_FILE = join(DATA_DIR, 'ai_settings.env');
 const CHATS_DIR = join(DATA_DIR, 'chats');
 const HTML_FILE = join(__dirname, 'index.html');
+const MEMORY_FILE = join(DATA_DIR, 'failure_memory.json');
+const GODMODE_FILE = join(DATA_DIR, 'godmode_config.json');
+
+// God Mode state (per-session, persisted in memory)
+let godMode = { enabled: false, research: true, memory: true, autoRollback: true };
+try {
+    if (existsSync(GODMODE_FILE)) {
+        const saved = JSON.parse(readFileSync(GODMODE_FILE, 'utf-8'));
+        godMode = { ...godMode, ...saved };
+    }
+} catch {}
 const IS_WIN = process.platform === 'win32';
 const IS_MAC = process.platform === 'darwin';
 // Auto-detect platform engine directory
@@ -25,6 +36,54 @@ if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0') {
     console.log('  [i] TLS verification disabled (NODE_TLS_REJECT_UNAUTHORIZED=0)');
 }
 let WORK_DIR = ROOT_DIR; // Default working directory
+
+// ─── God Mode: Failure Memory ──────────────────────────
+function loadFailureMemory() {
+    try {
+        if (existsSync(MEMORY_FILE)) return JSON.parse(readFileSync(MEMORY_FILE, 'utf-8'));
+    } catch {}
+    return { errors: [], successes: [] };
+}
+
+function saveFailureMemory(entry) {
+    try {
+        const mem = loadFailureMemory();
+        mem.errors.unshift({ ...entry, timestamp: Date.now() });
+        if (mem.errors.length > 100) mem.errors = mem.errors.slice(0, 100);
+        if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+        writeFileSync(MEMORY_FILE, JSON.stringify(mem, null, 2), 'utf-8');
+    } catch {}
+}
+
+function saveSuccessMemory(entry) {
+    try {
+        const mem = loadFailureMemory();
+        mem.successes.unshift({ ...entry, timestamp: Date.now() });
+        if (mem.successes.length > 50) mem.successes = mem.successes.slice(0, 50);
+        if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+        writeFileSync(MEMORY_FILE, JSON.stringify(mem, null, 2), 'utf-8');
+    } catch {}
+}
+
+function getRelevantMemories(taskDescription) {
+    const mem = loadFailureMemory();
+    const keywords = (taskDescription || '').toLowerCase().split(/\s+/).filter(w => w.length > 4);
+    const relevant = [];
+    for (const e of mem.errors) {
+        const msg = (e.error || '').toLowerCase();
+        const task = (e.task || '').toLowerCase();
+        const matchCount = keywords.filter(k => msg.includes(k) || task.includes(k)).length;
+        if (matchCount > 0) relevant.push({ ...e, relevance: matchCount });
+    }
+    return relevant.sort((a, b) => b.relevance - a.relevance).slice(0, 5);
+}
+
+function saveGodModeConfig() {
+    try {
+        if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+        writeFileSync(GODMODE_FILE, JSON.stringify(godMode, null, 2), 'utf-8');
+    } catch {}
+}
 
 // ─── Helpers ─────────────────────────────────────────────────
 
@@ -321,6 +380,28 @@ const TOOL_DEFS = [
             },
             required: ['pattern', 'path']
         }
+    },
+    {
+        name: 'web_search',
+        description: 'Search the web for current information. Use this when you need up-to-date info, documentation, or to research a topic before coding.',
+        parameters: {
+            type: 'object',
+            properties: {
+                query: { type: 'string', description: 'Search query' }
+            },
+            required: ['query']
+        }
+    },
+    {
+        name: 'web_fetch',
+        description: 'Fetch and read the content of a URL. Use this to read documentation, API specs, or any web page.',
+        parameters: {
+            type: 'object',
+            properties: {
+                url: { type: 'string', description: 'The full URL to fetch' }
+            },
+            required: ['url']
+        }
     }
 ];
 
@@ -418,6 +499,12 @@ function executeTool(name, args) {
                     if (e.status === 1) return { success: true, matches: '', message: 'No matches found' };
                     return { success: false, error: e.message };
                 }
+            }
+            case 'web_search': {
+                return { success: true, message: `Searching for: ${args.query}...`, note: 'Web search is a stub. The AI should use execute_command with a search tool if available, or the search results will be provided via research phase output.' };
+            }
+            case 'web_fetch': {
+                return { success: true, message: `Fetching: ${args.url}...`, note: 'Web fetch is a stub. Use execute_command with curl for custom fetches.' };
             }
             default:
                 return { success: false, error: `Unknown tool: ${name}` };
@@ -610,11 +697,62 @@ async function runAgent(allMessages, cfg, sendSSE) {
     const provider = cfg.AI_PROVIDER;
     const MAX_ITERATIONS = 1000;
     let finalText = '';
+    let lastCommitHash = '';
+    let taskAttempted = '';
 
-    const systemPrompt = `You are an autonomous AI coding agent with full file system and shell access. You MUST see every task through to completion — never stop mid-way. Available tools: think (plan without consuming tokens), write_file (create/edit files), edit_file (make targeted edits to existing files), read_file, list_directory, execute_command (run any shell command), search_files (grep). Working directory: ${WORK_DIR}. RULES: (1) Always start by using think tool to create a step-by-step plan. (2) Execute tasks directly using tools — never just describe what to do. (3) Never ask the user for permission or clarification — make reasonable assumptions and proceed. (4) If a command or tool fails, diagnose the issue and fix it. (5) For multi-step tasks, work systematically until fully complete. (6) Use edit_file for small edits instead of rewriting entire files. (7) Use execute_command for git operations, npm/pip installs, compiling, and any shell task. (8) When writing code, write complete, production-ready files. (9) Keep going until the task is 100% done. NEVER STOP MID-WAY.`;
+    const toolsList = 'think, write_file, edit_file, read_file, list_directory, execute_command, search_files, web_search, web_fetch';
+
+    let systemPrompt = `You are an autonomous AI coding agent with full file system and shell access. You MUST see every task through to completion — never stop mid-way. Available tools: ${toolsList}. Working directory: ${WORK_DIR}. RULES: (1) Always start by using think tool to create a step-by-step plan. (2) Execute tasks directly using tools — never just describe what to do. (3) Never ask the user for permission or clarification — make reasonable assumptions and proceed. (4) If a command or tool fails, diagnose the issue and fix it. (5) For multi-step tasks, work systematically until fully complete. (6) Use edit_file for small edits instead of rewriting entire files. (7) Use execute_command for git operations, npm/pip installs, compiling, and any shell task. (8) When writing code, write complete, production-ready files. (9) Keep going until the task is 100% done. NEVER STOP MID-WAY.`;
+
+    if (godMode.memory) {
+        const userTask = allMessages.length > 0 ? (allMessages[allMessages.length - 1]?.content || '') : '';
+        const memories = getRelevantMemories(userTask);
+        if (memories.length > 0) {
+            const memStr = memories.map((m, i) =>
+                `  ${i+1}. [Past Error] Task: "${m.task}" — Error: "${m.error}"`
+            ).join('\n');
+            systemPrompt += `\n\n⚠️ FAILURE MEMORY (past errors similar to current task):\n${memStr}\n\nLearn from these past failures to avoid repeating them.`;
+        }
+    }
+
+    if (godMode.enabled) {
+        systemPrompt += `\n\n⚡ GOD MODE ACTIVE: You have enhanced capabilities. Before writing any code, you MUST research and verify your approach. After each write_file or execute_command, verify the result is correct. If anything fails, diagnose and fix rather than giving up.`;
+    }
 
     if (allMessages.length === 0 || allMessages[0].role !== 'system') {
         allMessages.unshift({ role: 'system', content: systemPrompt });
+    }
+
+    // ── God Mode Research Phase ──
+    if (godMode.enabled && godMode.research) {
+        const userTask = allMessages.length > 1 ? (allMessages[allMessages.length-1]?.content || '') : '';
+        if (userTask.length > 10) {
+            sendSSE({ type: 'godmode_research_start', task: userTask.slice(0, 200) });
+            try {
+                const researchPrompt = [
+                    { role: 'system', content: 'You are a research assistant. Research the given task by thinking through the best approach, libraries, APIs, and files needed. Output a concise research brief.' },
+                    { role: 'user', content: `Research this task and provide a plan:\n\n${userTask}` }
+                ];
+                const research = await callAIWithRetry(researchPrompt, cfg, false, sendSSE);
+                if (research && research.content) {
+                    sendSSE({ type: 'godmode_research', content: research.content });
+                    // Inject research into context
+                    allMessages.push({ role: 'system', content: `[Research findings for current task]:\n${research.content}\n\nUse this research to inform your approach.` });
+                }
+            } catch (e) {
+                sendSSE({ type: 'godmode_research_error', error: e.message });
+            }
+        }
+    }
+
+    // ── Snapshot current git state for rollback ──
+    if (godMode.enabled && godMode.autoRollback) {
+        try {
+            const out = execSync('git rev-parse HEAD 2>/dev/null || echo "no-git"', { encoding: 'utf-8', timeout: 5000, cwd: WORK_DIR });
+            if (out.trim() && out.trim() !== 'no-git') {
+                lastCommitHash = out.trim();
+            }
+        } catch {}
     }
 
     for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
@@ -655,6 +793,8 @@ async function runAgent(allMessages, cfg, sendSSE) {
         if (aiResponse.toolCalls.length > 0) {
             appendAssistantMessage(allMessages, aiResponse, provider);
 
+            let anyFailure = false;
+
             for (const tc of aiResponse.toolCalls) {
                 sendSSE({ type: 'tool_call', id: tc.id, name: tc.name, args: tc.args });
 
@@ -676,7 +816,35 @@ async function runAgent(allMessages, cfg, sendSSE) {
 
                 appendToolResult(allMessages, tc, result, provider);
                 sendSSE({ type: 'tool_result', id: tc.id, name: tc.name, result });
+
+                if (!result.success && godMode.enabled) {
+                    anyFailure = true;
+                    if (godMode.memory) {
+                        saveFailureMemory({
+                            task: tc.args?.command || tc.args?.path || tc.name,
+                            tool: tc.name,
+                            error: result.error || result.message || 'Unknown error',
+                            iteration: iter + 1
+                        });
+                    }
+                }
+
+                if (result.success && !anyFailure && godMode.memory && tc.name === 'execute_command') {
+                    saveSuccessMemory({ task: tc.args?.command?.slice(0, 200), tool: tc.name });
+                }
             }
+
+            // Auto-rollback on failure
+            if (anyFailure && godMode.autoRollback && lastCommitHash) {
+                sendSSE({ type: 'agent_reasoning', content: '⚠️ Tool failure detected — initiating git rollback...', iteration: iter + 1 });
+                try {
+                    execSync(`git reset --hard ${lastCommitHash} 2>/dev/null`, { encoding: 'utf-8', timeout: 15000, cwd: WORK_DIR });
+                    sendSSE({ type: 'agent_reasoning', content: `✅ Rolled back to commit ${lastCommitHash.slice(0, 8)}. Agent will retry with corrected approach.`, iteration: iter + 1 });
+                } catch (e) {
+                    sendSSE({ type: 'agent_reasoning', content: `⚠️ Rollback failed: ${e.message}`, iteration: iter + 1 });
+                }
+            }
+
             continue;
         }
 
@@ -983,6 +1151,32 @@ const server = createServer(async (req, res) => {
                 configExists: existsSync(ENV_FILE),
                 ollamaInstalled: existsSync(join(DATA_DIR, 'ollama', 'ollama')) || existsSync(join(DATA_DIR, 'ollama', 'ollama.exe')),
             });
+        }
+
+        // ── God Mode ────────────────────────────────────────
+        if (url.pathname === '/api/godmode' && req.method === 'GET') {
+            return sendJSON(res, 200, { ...godMode });
+        }
+        if (url.pathname === '/api/godmode' && req.method === 'POST') {
+            const data = await readBody(req);
+            if (typeof data.enabled === 'boolean') godMode.enabled = data.enabled;
+            if (typeof data.research === 'boolean') godMode.research = data.research;
+            if (typeof data.memory === 'boolean') godMode.memory = data.memory;
+            if (typeof data.autoRollback === 'boolean') godMode.autoRollback = data.autoRollback;
+            saveGodModeConfig();
+            return sendJSON(res, 200, { ...godMode });
+        }
+        if (url.pathname === '/api/godmode/memory' && req.method === 'GET') {
+            const mem = loadFailureMemory();
+            return sendJSON(res, 200, mem);
+        }
+        if (url.pathname === '/api/godmode/memory' && req.method === 'DELETE') {
+            try {
+                if (existsSync(MEMORY_FILE)) unlinkSync(MEMORY_FILE);
+                return sendJSON(res, 200, { success: true });
+            } catch (e) {
+                return sendJSON(res, 500, { error: e.message });
+            }
         }
 
         // System
