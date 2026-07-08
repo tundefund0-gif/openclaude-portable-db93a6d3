@@ -14,7 +14,7 @@ const MEMORY_FILE = join(DATA_DIR, 'failure_memory.json');
 const GODMODE_FILE = join(DATA_DIR, 'godmode_config.json');
 
 // God Mode state (per-session, persisted in memory)
-let godMode = { enabled: true, research: true, memory: true, autoRollback: true, autoTune: true, stm: true };
+let godMode = { enabled: true, memory: true, autoRollback: true, autoTune: true, stm: true };
 try {
     if (existsSync(GODMODE_FILE)) {
         const saved = JSON.parse(readFileSync(GODMODE_FILE, 'utf-8'));
@@ -868,34 +868,15 @@ RULES:
     }
 
     if (godMode.enabled) {
-        systemPrompt += `\n\n⚡ GOD MODE ACTIVE: You have enhanced capabilities. Before writing any code, you MUST research and verify your approach. After each write_file or execute_command, verify the result is correct. If anything fails, diagnose and fix rather than giving up.`;
+        systemPrompt += `\n\n⚡ GOD MODE ACTIVE: AutoTune (optimal params) + STM (clean output) + Memory (learns from errors) + Rollback (undo on failure).`;
     }
 
     if (allMessages.length === 0 || allMessages[0].role !== 'system') {
         allMessages.unshift({ role: 'system', content: systemPrompt });
     }
 
-    // ── God Mode Research Phase ──
-    if (godMode.enabled && godMode.research) {
-        const userTask = allMessages.length > 1 ? (allMessages[allMessages.length-1]?.content || '') : '';
-        if (userTask.length > 10) {
-            sendSSE({ type: 'godmode_research_start', task: userTask.slice(0, 200) });
-            try {
-                const researchPrompt = [
-                    { role: 'system', content: 'You are a research assistant. Research the given task by thinking through the best approach, libraries, APIs, and files needed. Output a concise research brief.' },
-                    { role: 'user', content: `Research this task and provide a plan:\n\n${userTask}` }
-                ];
-                const research = await callAIWithRetry(researchPrompt, cfg, false, sendSSE);
-                if (research && research.content) {
-                    sendSSE({ type: 'godmode_research', content: research.content });
-                    // Inject research into context
-                    allMessages.push({ role: 'system', content: `[Research findings for current task]:\n${research.content}\n\nUse this research to inform your approach.` });
-                }
-            } catch (e) {
-                sendSSE({ type: 'godmode_research_error', error: e.message });
-            }
-        }
-    }
+    // Dead code will not be tolerated. You MUST verify your work before declaring completion.
+    allMessages.push({ role: 'user', content: 'CRITICAL RULE: Before declaring any task complete, you MUST verify your work actually works. Run the code, check file contents, execute tests. If you cannot verify success, continue working. Saying "done" without verification is lying.' });
 
     // ── Snapshot current git state for rollback ──
     if (godMode.enabled && godMode.autoRollback) {
@@ -1312,11 +1293,10 @@ const server = createServer(async (req, res) => {
         if (url.pathname === '/api/godmode' && req.method === 'POST') {
             const data = await readBody(req);
             if (typeof data.enabled === 'boolean') godMode.enabled = data.enabled;
-            if (typeof data.research === 'boolean') godMode.research = data.research;
-            if (typeof data.memory === 'boolean') godMode.memory = data.memory;
-            if (typeof data.autoRollback === 'boolean') godMode.autoRollback = data.autoRollback;
             if (typeof data.autoTune === 'boolean') godMode.autoTune = data.autoTune;
             if (typeof data.stm === 'boolean') godMode.stm = data.stm;
+            if (typeof data.memory === 'boolean') godMode.memory = data.memory;
+            if (typeof data.autoRollback === 'boolean') godMode.autoRollback = data.autoRollback;
             saveGodModeConfig();
             return sendJSON(res, 200, { ...godMode, autoTuneContext: autoTuneLastContext, autoTuneParams: autoTuneLastParams });
         }

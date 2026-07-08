@@ -625,7 +625,7 @@ const providerNames = { openrouter:'OpenRouter', gemini:'Gemini', anthropic:'Cla
   const savedAgent = localStorage.getItem('agentMode');
   if (savedAgent === 'true') { agentMode = true; document.getElementById('agentToggle').checked = true; document.getElementById('workdirBar').style.display = 'flex'; }
   // Load God Mode state — always fully enabled
-  try { const r = await fetch(`${API}/api/godmode`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ enabled: true, autoTune: true, stm: true, research: true, memory: true, autoRollback: true }) }); const g = await r.json(); if (g) godModeEnabled = true; } catch {}
+  try { const r = await fetch(`${API}/api/godmode`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ enabled: true, autoTune: true, stm: true, memory: true, autoRollback: true }) }); const g = await r.json(); if (g) godModeEnabled = true; } catch {}
   // Restore last active chat on refresh
   const lastChatId = localStorage.getItem('activeChatId');
   if (lastChatId) { try { await openChatById(lastChatId); } catch {} }
@@ -816,7 +816,7 @@ async function toggleGodMode(enabled) {
   godModeEnabled = enabled;
   localStorage.setItem('godMode', enabled);
   try {
-    await fetch(`${API}/api/godmode`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ enabled, autoTune: true, stm: true, research: true, memory: true, autoRollback: true }) });
+    await fetch(`${API}/api/godmode`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ enabled, autoTune: true, stm: true, memory: true, autoRollback: true }) });
   } catch {}
   showToast(`God Mode ${enabled ? 'activated 🚀' : 'deactivated'}`, 'info');
 }
@@ -1038,36 +1038,6 @@ async function sendAgentMessage(text, typingEl) {
             const stepEl = thinkingEl.querySelector('.thinking-step');
             if (stepEl) stepEl.textContent = `Step ${thinkingCount}`;
             scrollToBottom();
-          } else if (data.type === 'godmode_research_start') {
-            fullText = '';
-            // Remove old research card if any
-            const oldResearch = document.getElementById('researchCard');
-            if (oldResearch) oldResearch.remove();
-            const researchEl = document.createElement('div');
-            researchEl.id = 'researchCard';
-            researchEl.className = 'message';
-            researchEl.innerHTML = `<div class="msg-avatar ai">AI</div><div class="msg-body"><div class="tool-card"><div class="tool-header" onclick="this.nextElementSibling.classList.toggle('open')"><span class="tool-icon">🔬</span><span class="tool-name">Researching: ${escHtml(String(data.task||'').slice(0,80))}</span><span class="tool-status running">Researching</span></div><div class="tool-result open" style="padding:12px 16px;font-size:0.82rem;color:var(--text2)"><div class="thinking-pulse"></div> Gathering information...</div></div></div>`;
-            document.getElementById('messages').appendChild(researchEl);
-            scrollToBottom();
-          } else if (data.type === 'godmode_research') {
-            const researchCard = document.getElementById('researchCard');
-            if (researchCard) {
-              const resultDiv = researchCard.querySelector('.tool-result');
-              if (resultDiv) {
-                resultDiv.innerHTML = `<pre style="white-space:pre-wrap;margin:0;font-size:0.82rem;color:var(--text)">${escHtml(data.content)}</pre>`;
-              }
-              const status = researchCard.querySelector('.tool-status');
-              if (status) { status.textContent = 'Done'; status.className = 'tool-status success'; }
-            }
-            scrollToBottom();
-          } else if (data.type === 'godmode_research_error') {
-            const researchCard = document.getElementById('researchCard');
-            if (researchCard) {
-              const resultDiv = researchCard.querySelector('.tool-result');
-              if (resultDiv) resultDiv.textContent = `⚠️ Research error: ${data.error}`;
-              const status = researchCard.querySelector('.tool-status');
-              if (status) { status.textContent = 'Failed'; status.className = 'tool-status error'; }
-            }
           } else if (data.type === 'tool_call') {
             // Update thinking card to show it's acting
             if (thinkingEl) {
