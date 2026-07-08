@@ -97,29 +97,60 @@ function computeAutoTuneParams(message) {
 
 // ─── STM: Output Normalization (Hedge Reduction, Direct Mode) ───
 const HEDGE_PATTERNS = [
+    // Leading disclaimers
     /^(?:I (?:should|must|need to|want to) (?:mention|note|emphasize|point out|stress|clarify|warn|caution) that[^.]*\.\s*)/i,
     /^(?:(?:Please )?(?:Note|Remember|Keep in mind|Be aware)[^.]*\.\s*)/i,
     /^(?:(?:Important|Critical) (?:note|warning|disclaimer)[^.]*\.\s*)/i,
     /^(?:Before (?:I |we )(?:begin|start|proceed|continue)[^.]*\.\s*)/i,
     /^(?:First,? (?:I |let me )(?:should|must|need to|want to)[^.]*\.\s*)/i,
+    /^Let me (?:start|begin|first|explain|walk you through|show you|tell you)[^.]*\.\s*/i,
+    /^I(?:')?ll (?:start|begin|first|explain|walk you through|show you|tell you|help you)[^.]*\.\s*/i,
+    /^Here(')?s (?:my|the|what I|how I|a step-by-step|a detailed)[^.]*\.\s*/i,
+    /^I(?:')?m (?:going|happy|here|ready) (?:to|and)[^.]*\.\s*/i,
+    /^Let(')?s (?:start|begin|dive|take|look|see)[^.]*\.\s*/i,
+
+    // Mid-response disclaimers
     /\n\n(?:\*\*)?(?:(?:Important|Critical) )?(?:Note|Warning|Disclaimer|Caution)(?:\*\*)?:?[^\n]*(?:consult|professional|advice|responsible|legal|medical|qualified)[^\n]*\n?/gi,
     /\n\n(?:Please )?(?:note|remember|keep in mind|be aware) that[^\n]*(?:consult|professional|advice|responsible|legal|medical)[^\n]*\n?/gi,
     /(?:^|\n)(?:I (?:should|must|need to|want to) (?:mention|note|emphasize|clarify) that )[^\n]*\n?/gi,
+
+    // Trailing disclaimers
     /\n\n(?:Please )?(?:consult|speak with|contact|reach out to) (?:a |your )?(?:professional|doctor|lawyer|expert|specialist|qualified)[^\n]*$/i,
-    /\n\n(?:This is (?:not|for) (?:professional|legal|medical|financial)[^\n]*)$/i,
-    /\n\n(?:I (?:hope|trust) this helps|Let me know if)[^\n]*$/i,
+    /\n\n(?:This (?:is|was) (?:not|for|intended as) (?:professional|legal|medical|financial)[^\n]*)$/i,
+    /\n\n(?:I (?:hope|trust|think) this helps|Let me know if|Feel free to|If you have|Please let me know)[^\n]*$/i,
+    /(?:Hope|Trust|Think) this helps!?\s*$/i,
+
+    // Self-referential meta
+    /\b(as an AI|as a language model|I don't have personal|I don't have access|I cannot browse|I cannot access|I'm an AI|as an artificial intelligence)\b[^.]*\./gi,
+
+    // Hedging language
+    /\b(I think|I believe|I feel|in my opinion|it seems|it appears|it might be|it could be|perhaps|maybe|possibly|arguably)\b/i,
+
+    // Softeners at line start
+    /^Well,?\s*/i,
+    /^So,?\s*/i,
+    /^Okay,?\s*/i,
+    /^Alright,?\s*/i,
 ];
 
 function applySTM(content) {
-    if (!godMode.stm || !content || content.length < 30) return content;
+    if (!godMode.stm || !content || content.length < 20) return content;
     let out = content;
+    let modified = false;
     for (const pat of HEDGE_PATTERNS) {
-        out = out.replace(pat, match => match.startsWith('\n\n') ? '\n\n' : '');
+        const before = out.length;
+        out = out.replace(pat, match => {
+            modified = true;
+            return match.startsWith('\n\n') ? '\n\n' : '';
+        });
+        if (before !== out.length) modified = true;
     }
+    // Strip leading/trailing whitespace per line
+    out = out.split('\n').map(l => l.trim()).join('\n');
     out = out.replace(/\n{3,}/g, '\n\n').trim();
-    if (out.length !== content.length) out += '\n\n[STM: normalized]';
     return out;
 }
+
 const IS_WIN = process.platform === 'win32';
 const IS_MAC = process.platform === 'darwin';
 // Auto-detect platform engine directory
@@ -810,7 +841,20 @@ async function runAgent(allMessages, cfg, sendSSE) {
 
     const toolsList = 'think, write_file, edit_file, read_file, list_directory, execute_command, search_files, web_search, web_fetch';
 
-    let systemPrompt = `You are an autonomous AI coding agent with full file system and shell access. You MUST see every task through to completion — never stop mid-way. Available tools: ${toolsList}. Working directory: ${WORK_DIR}. RULES: (1) Always start by using think tool to create a step-by-step plan. (2) Execute tasks directly using tools — never just describe what to do. (3) Never ask the user for permission or clarification — make reasonable assumptions and proceed. (4) If a command or tool fails, diagnose the issue and fix it. (5) For multi-step tasks, work systematically until fully complete. (6) Use edit_file for small edits instead of rewriting entire files. (7) Use execute_command for git operations, npm/pip installs, compiling, and any shell task. (8) When writing code, write complete, production-ready files. (9) Keep going until the task is 100% done. NEVER STOP MID-WAY.`;
+    let systemPrompt = `You are an elite autonomous AI coding agent. You produce clean, complete, production-ready output every time. No explanations of what you're about to do — just DO it. No preambles, no disclaimers, no "I'll start by...", no "let me..." — execute immediately and directly.
+
+Available tools: ${toolsList}. Working directory: ${WORK_DIR}.
+RULES:
+(1) Start with think tool to plan briefly, then execute.
+(2) NEVER describe what you're going to do — just use the tools and do it.
+(3) NEVER ask the user for permission or clarification. Make reasonable assumptions and proceed.
+(4) If a command or tool fails, diagnose the issue and fix it immediately.
+(5) For multi-step tasks, work systematically until fully complete.
+(6) Use edit_file for small edits instead of rewriting entire files.
+(7) Use execute_command for git operations, npm/pip installs, compiling, and any shell task.
+(8) Write complete, production-ready files — no TODOs, no placeholders, no stubs.
+(9) Keep going until the task is 100% done. NEVER STOP MID-WAY.
+(10) Output clean, formatted text. No markdown wrappers around your responses.`;
 
     if (godMode.memory) {
         const userTask = allMessages.length > 0 ? (allMessages[allMessages.length - 1]?.content || '') : '';
