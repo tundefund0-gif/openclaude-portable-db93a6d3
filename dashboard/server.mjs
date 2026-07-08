@@ -255,14 +255,25 @@ function readBodyRaw(req) {
 }
 
 async function fetchExternal(url, headers = {}, body = null, method = 'GET', attempt = 1) {
-    const maxAttempts = 3;
+    const maxAttempts = 10;
     const mod = await import(url.startsWith('https') ? 'https' : 'http');
     return new Promise((resolve, reject) => {
         const opts = { method, headers, rejectUnauthorized: process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0' };
         const req = mod.request(url, opts, res => {
             let data = '';
             res.on('data', chunk => data += chunk);
-            res.on('end', () => resolve({ status: res.statusCode, data, headers: res.headers }));
+            res.on('end', () => {
+                const status = res.statusCode;
+                // Retry on 5xx server errors
+                if (status >= 500 && attempt < 10) {
+                    const delay = Math.min(1000 * Math.pow(2, attempt), 30000);
+                    setTimeout(() => {
+                        fetchExternal(url, headers, body, method, attempt + 1).then(resolve).catch(reject);
+                    }, delay);
+                    return;
+                }
+                resolve({ status, data, headers: res.headers });
+            });
         });
         req.on('error', (err) => {
             if (isSSLError(err) && attempt < maxAttempts) {
@@ -281,7 +292,7 @@ async function fetchExternal(url, headers = {}, body = null, method = 'GET', att
 }
 
 async function streamExternal(url, headers, body, onChunk, onEnd, attempt = 1) {
-    const maxAttempts = 10;
+    const maxAttempts = 20;
     const mod = await import(url.startsWith('https') ? 'https' : 'http');
     return new Promise((resolve, reject) => {
         const req = mod.request(url, { method: 'POST', headers, rejectUnauthorized: process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0' }, res => {
@@ -676,14 +687,14 @@ async function callAI_OpenAI(messages, cfg, includeTools = true) {
     }
     const resp = await fetchExternal(`${baseUrl}/chat/completions`, headers, body, 'POST');
     let data;
-    try { data = JSON.parse(resp.data); } catch { throw new Error('Invalid response from AI API: ' + resp.data.slice(0, 300)); }
+    try { data = JSON.parse(resp.data); } catch { throw new Error(`Invalid response (HTTP ${resp.status}): ${resp.data.slice(0, 300)}`); }
     // Check for API-level error
     if (data.error) {
         const errMsg = data.error.message || data.error.code || JSON.stringify(data.error);
-        throw new Error(`API Error: ${errMsg}`);
+        throw new Error(`API Error (HTTP ${resp.status}): ${errMsg}`);
     }
     const choice = data.choices?.[0]?.message;
-    if (!choice) throw new Error('No response from AI: ' + resp.data.slice(0, 300));
+    if (!choice) throw new Error(`No response (HTTP ${resp.status}): ${resp.data.slice(0, 300)}`);
     return {
         content: choice.content || '',
         toolCalls: (choice.tool_calls || []).map(tc => ({
@@ -825,9 +836,11 @@ async function callAIWithRetry(messages, cfg, includeTools, sendSSE, attempt = 1
     try {
         return await callAI(messages, cfg, includeTools);
     } catch (e) {
-        if (isSSLError(e) && attempt <= MAX_RETRIES) {
+        const msg = (e.message || '').toLowerCase();
+        const isRetryable = isSSLError(e) || msg.includes('5') || msg.includes('internal server') || msg.includes('service unavailable') || msg.includes('bad gateway') || msg.includes('rate limit') || msg.includes('too many requests') || msg.includes('timeout');
+        if (isRetryable && attempt <= MAX_RETRIES) {
             const delay = Math.min(500 * Math.pow(2, attempt), 30000);
-            sendSSE({ type: 'agent_reasoning', content: `⚠️ Network/SSL error (attempt ${attempt}/${MAX_RETRIES}), retrying in ${delay/1000}s...`, iteration: 1 });
+            sendSSE({ type: 'agent_reasoning', content: `⚠️ API error (attempt ${attempt}/${MAX_RETRIES}), retrying in ${delay/1000}s...`, iteration: 1 });
             await new Promise(r => setTimeout(r, delay));
             return callAIWithRetry(messages, cfg, includeTools, sendSSE, attempt + 1);
         }
@@ -902,10 +915,10 @@ RULES:
         } catch (e) {
             if (iter === 0) {
                 try {
-                    if (isSSLError(e)) {
-                        sendSSE({ type: 'agent_reasoning', content: '⚠️ Network/SSL error. Trying without tools (fallback mode)...', iteration: 1 });
+                    if (isSSLError(e) || (e.message && (e.message.includes('tool') || e.message.includes('function')))) {
+                        sendSSE({ type: 'agent_reasoning', content: '⚠️ Tool calling not supported by this model, falling back to chat mode...', iteration: 1 });
                     } else {
-                        sendSSE({ type: 'agent_reasoning', content: 'Tool calling not supported by this model, falling back to chat mode...', iteration: 1 });
+                        sendSSE({ type: 'agent_reasoning', content: `Retrying without tools...`, iteration: 1 });
                     }
                     aiResponse = await callAIWithRetry(allMessages, cfg, false, sendSSE);
                 } catch (e2) {
