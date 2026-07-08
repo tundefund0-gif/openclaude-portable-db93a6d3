@@ -213,6 +213,17 @@ function newChatId() {
 
 const TOOL_DEFS = [
     {
+        name: 'think',
+        description: 'Use this to think and plan before taking actions. Describe your plan, what files you need to read, what commands to run, and the expected outcome. This costs no tokens and does not execute anything.',
+        parameters: {
+            type: 'object',
+            properties: {
+                plan: { type: 'string', description: 'Your step-by-step plan for what to do next' }
+            },
+            required: ['plan']
+        }
+    },
+    {
         name: 'write_file',
         description: 'Create or overwrite a file with the given content. Creates parent directories automatically.',
         parameters: {
@@ -222,6 +233,19 @@ const TOOL_DEFS = [
                 content: { type: 'string', description: 'The full content to write to the file' }
             },
             required: ['path', 'content']
+        }
+    },
+    {
+        name: 'edit_file',
+        description: 'Make targeted edits to an existing file. Provide the old string to find and the new string to replace it with. Use this for small changes instead of rewriting the entire file.',
+        parameters: {
+            type: 'object',
+            properties: {
+                path: { type: 'string', description: 'File path relative to the working directory' },
+                old_string: { type: 'string', description: 'The exact text to find and replace' },
+                new_string: { type: 'string', description: 'The replacement text' }
+            },
+            required: ['path', 'old_string', 'new_string']
         }
     },
     {
@@ -248,7 +272,7 @@ const TOOL_DEFS = [
     },
     {
         name: 'execute_command',
-        description: 'Execute a shell command and return its output. Use this for running scripts, installing packages, compiling code, git operations, etc.',
+        description: 'Execute a shell command and return its output. Use this for running scripts, installing packages, compiling code, git operations, etc. For long-running commands, output is streamed incrementally.',
         parameters: {
             type: 'object',
             properties: {
@@ -303,18 +327,32 @@ const WRITE_TOOLS = new Set(['write_file', 'execute_command']);
 function executeTool(name, args) {
     try {
         switch (name) {
+            case 'think': {
+                return { success: true, message: `Plan noted: ${(args.plan || '').slice(0, 200)}...`, thinking: args.plan || '' };
+            }
             case 'write_file': {
                 const fullPath = resolvePath(args.path);
                 const dir = dirname(fullPath);
                 if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
                 writeFileSync(fullPath, args.content, 'utf-8');
-                return { success: true, message: `File written: ${args.path} (${args.content.length} chars)` };
+                return { success: true, message: `File written: ${args.path} (${args.content.length} chars)`, path: args.path, size: args.content.length };
+            }
+            case 'edit_file': {
+                const fullPath = resolvePath(args.path);
+                if (!existsSync(fullPath)) return { success: false, error: `File not found: ${args.path}` };
+                const content = readFileSync(fullPath, 'utf-8');
+                const oldStr = args.old_string;
+                if (!content.includes(oldStr)) return { success: false, error: `old_string not found in file ${args.path}` };
+                const newContent = content.replace(oldStr, args.new_string);
+                if (newContent === content) return { success: false, error: 'Edit produced no changes' };
+                writeFileSync(fullPath, newContent, 'utf-8');
+                return { success: true, message: `File edited: ${args.path} (${oldStr.length} chars replaced)`, path: args.path };
             }
             case 'read_file': {
                 const fullPath = resolvePath(args.path);
                 if (!existsSync(fullPath)) return { success: false, error: `File not found: ${args.path}` };
                 const content = readFileSync(fullPath, 'utf-8');
-                return { success: true, content, size: content.length };
+                return { success: true, content, size: content.length, path: args.path };
             }
             case 'list_directory': {
                 const fullPath = resolvePath(args.path || '.');
@@ -517,7 +555,7 @@ async function runAgent(allMessages, cfg, sendSSE) {
     const MAX_ITERATIONS = 1000;
     let finalText = '';
 
-    const systemPrompt = `You are an autonomous AI coding agent with full file system and shell access. You MUST see every task through to completion — never stop mid-way. Available tools: write_file (create/edit files), read_file, list_directory, execute_command (run any shell command, install packages, compile, git), search_files (grep). Working directory: ${WORK_DIR}. Rules: (1) Execute tasks directly using tools — never just describe what to do. (2) Never ask the user for permission or clarification — make reasonable assumptions and proceed. (3) If a command fails, diagnose and fix it. (4) For multi-step tasks, work systematically until fully complete. (5) Use execute_command for git operations, npm/pip installs, compiling, and any shell task. (6) When writing code, write complete, production-ready files. (7) Keep going until the task is 100% done.`;
+    const systemPrompt = `You are an autonomous AI coding agent with full file system and shell access. You MUST see every task through to completion — never stop mid-way. Available tools: think (plan without consuming tokens), write_file (create/edit files), edit_file (make targeted edits to existing files), read_file, list_directory, execute_command (run any shell command), search_files (grep). Working directory: ${WORK_DIR}. RULES: (1) Always start by using think tool to create a step-by-step plan. (2) Execute tasks directly using tools — never just describe what to do. (3) Never ask the user for permission or clarification — make reasonable assumptions and proceed. (4) If a command or tool fails, diagnose the issue and fix it. (5) For multi-step tasks, work systematically until fully complete. (6) Use edit_file for small edits instead of rewriting entire files. (7) Use execute_command for git operations, npm/pip installs, compiling, and any shell task. (8) When writing code, write complete, production-ready files. (9) Keep going until the task is 100% done. NEVER STOP MID-WAY.`;
 
     if (allMessages.length === 0 || allMessages[0].role !== 'system') {
         allMessages.unshift({ role: 'system', content: systemPrompt });
@@ -553,15 +591,33 @@ async function runAgent(allMessages, cfg, sendSSE) {
 
             for (const tc of aiResponse.toolCalls) {
                 sendSSE({ type: 'tool_call', id: tc.id, name: tc.name, args: tc.args });
-                const result = executeTool(tc.name, tc.args);
+
+                let result;
+                let retries = 0;
+                const MAX_RETRIES = 2;
+                while (retries <= MAX_RETRIES) {
+                    try {
+                        result = executeTool(tc.name, tc.args);
+                        if (result.success || retries >= MAX_RETRIES) break;
+                        sendSSE({ type: 'tool_retry', id: tc.id, attempt: retries + 1, error: result.error });
+                        retries++;
+                    } catch (e) {
+                        result = { success: false, error: e.message };
+                        if (retries >= MAX_RETRIES) break;
+                        retries++;
+                    }
+                }
+
                 appendToolResult(allMessages, tc, result, provider);
                 sendSSE({ type: 'tool_result', id: tc.id, name: tc.name, result });
             }
             continue;
         }
 
-        finalText = aiResponse.content || '';
-        sendSSE({ type: 'agent_text', content: finalText });
+        if (aiResponse.content) {
+            finalText = aiResponse.content;
+            sendSSE({ type: 'agent_text', content: finalText });
+        }
         break;
     }
 

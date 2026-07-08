@@ -1087,19 +1087,20 @@ function toggleThinking() {
 }
 
 function createToolCard(data) {
-  const icons = { write_file:'📄', read_file:'📖', list_directory:'📁', execute_command:'⚡', search_files:'🔍' };
+  const icons = { think:'🧠', write_file:'📄', edit_file:'✂️', read_file:'📖', list_directory:'📁', execute_command:'⚡', search_files:'🔍' };
   const el = document.createElement('div');
   el.className = 'message';
-  const argsPreview = data.name === 'write_file' ? data.args.path : data.name === 'execute_command' ? data.args.command : data.name === 'read_file' ? data.args.path : data.name === 'list_directory' ? (data.args.path||'.') : data.args.pattern;
+  const argsPreview = data.name === 'write_file' ? data.args.path : data.name === 'edit_file' ? data.args.path : data.name === 'execute_command' ? data.args.command : data.name === 'think' ? (data.args.plan||'').slice(0,80) : data.name === 'read_file' ? data.args.path : data.name === 'list_directory' ? (data.args.path||'.') : data.args.pattern;
+  const isThink = data.name === 'think';
   el.innerHTML = `
     <div class="msg-avatar ai">AI</div>
     <div class="msg-body"><div class="tool-card" id="tc_${data.id}">
-      <div class="tool-header" onclick="this.nextElementSibling.classList.toggle('open')">
+      <div class="tool-header" onclick="${isThink ? '' : "this.nextElementSibling.classList.toggle('open')"}">
         <span class="tool-icon">${icons[data.name]||'🔧'}</span>
-        <span class="tool-name">${data.name}(${escHtml(String(argsPreview||'').slice(0,60))})</span>
-        <span class="tool-status running">Running</span>
+        <span class="tool-name">${isThink ? 'Planning...' : data.name+'('+escHtml(String(argsPreview||'').slice(0,80))+')'}</span>
+        <span class="tool-status running">${isThink ? 'Thinking' : 'Running'}</span>
       </div>
-      <div class="tool-body">${data.name === 'write_file' ? escHtml(data.args.content||'').slice(0,50000) : JSON.stringify(data.args, null, 2)}</div>
+      <div class="tool-body ${isThink ? 'open' : ''}" style="${isThink ? 'background:var(--accent-subtle);font-size:0.82rem;color:var(--text);white-space:normal;line-height:1.5' : ''}">${data.name === 'think' ? '🧠 '+escHtml(data.args.plan||'') : data.name === 'write_file' ? escHtml(data.args.content||'').slice(0,50000) : JSON.stringify(data.args, null, 2)}</div>
     </div></div>`;
   return el;
 }
@@ -1109,6 +1110,13 @@ function updateToolCardResult(card, data) {
   const status = tc.querySelector('.tool-status');
   const body = tc.querySelector('.tool-body');
 
+  // think tool: show plan as done
+  if (data.name === 'think') {
+    status.className = 'tool-status success';
+    status.textContent = 'Planned';
+    return;
+  }
+
   if (data.result?.success) {
     status.className = 'tool-status success';
     status.textContent = 'Done';
@@ -1116,10 +1124,10 @@ function updateToolCardResult(card, data) {
     status.className = 'tool-status rejected';
     status.textContent = 'Failed';
   }
-  // Update body with result
   let resultText = '';
   if (data.name === 'write_file') resultText = data.result?.message || 'File written';
-  else if (data.name === 'read_file') resultText = data.result?.content?.slice(0,3000) || data.result?.error || '';
+  else if (data.name === 'edit_file') resultText = data.result?.message || 'File edited';
+  else if (data.name === 'read_file') resultText = data.result?.content?.slice(0,50000) || data.result?.error || '';
   else if (data.name === 'list_directory') resultText = (data.result?.entries||[]).map(e => `${e.type==='directory'?'📁':'📄'} ${e.name}${e.size?' ('+e.size+'b)':''}`).join('\n');
   else if (data.name === 'execute_command') resultText = (data.result?.output||'') + (data.result?.error ? '\n[STDERR] '+data.result.error : '');
   else if (data.name === 'search_files') resultText = data.result?.matches || data.result?.message || '';

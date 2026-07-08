@@ -426,12 +426,12 @@ for arg in "$@"; do
         --doctor|--diagnose) exec bash "$ROOT/tools/opencode-doctor.sh" ;;
         --update) exec bash "$ROOT/tools/opencode-update.sh" ;;
         --version|-v)
-            echo "OpenClaude Portable v1.3.0"
+            echo "OpenClaude Portable v1.4.0"
             echo "Engine: @gitlawb/openclaude"
             exit 0 ;;
         --help|-h)
             echo ""
-            echo "  OpenClaude Portable v1.3.0 - Zero-footprint AI coding agent"
+            echo "  OpenClaude Portable v1.4.0 - Zero-footprint AI coding agent"
             echo ""
             echo "  Usage: ./start.sh [OPTIONS]"
             echo ""
