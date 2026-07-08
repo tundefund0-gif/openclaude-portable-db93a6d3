@@ -91,7 +91,8 @@ async function fetchExternal(url, headers = {}, body = null, method = 'GET', att
     });
 }
 
-async function streamExternal(url, headers, body, onChunk, onEnd) {
+async function streamExternal(url, headers, body, onChunk, onEnd, attempt = 1) {
+    const maxAttempts = 3;
     const mod = await import(url.startsWith('https') ? 'https' : 'http');
     return new Promise((resolve, reject) => {
         const req = mod.request(url, { method: 'POST', headers, rejectUnauthorized: process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0' }, res => {
@@ -99,7 +100,16 @@ async function streamExternal(url, headers, body, onChunk, onEnd) {
             res.on('end', () => { onEnd(); resolve(); });
             res.on('error', reject);
         });
-        req.on('error', reject);
+        req.on('error', (err) => {
+            if (isSSLError(err) && attempt < maxAttempts) {
+                const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
+                setTimeout(() => {
+                    streamExternal(url, headers, body, onChunk, onEnd, attempt + 1).then(resolve).catch(reject);
+                }, delay);
+            } else {
+                reject(err);
+            }
+        });
         req.setTimeout(300000, () => { req.destroy(); reject(new Error('Timeout after 300s')); });
         req.write(body);
         req.end();
@@ -294,7 +304,8 @@ const TOOL_DEFS = [
         parameters: {
             type: 'object',
             properties: {
-                command: { type: 'string', description: 'The shell command to execute' }
+                command: { type: 'string', description: 'The shell command to execute' },
+                timeout: { type: 'number', description: 'Optional timeout in seconds (default: 300, max: 1800)' }
             },
             required: ['command']
         }
@@ -385,11 +396,12 @@ function executeTool(name, args) {
             }
             case 'execute_command': {
                 try {
+                    const cmdTimeout = Math.min(Math.max((args.timeout || 300) * 1000, 5000), 1800000);
                     const output = execSync(args.command, {
-                        cwd: WORK_DIR, encoding: 'utf-8', timeout: 300000,
+                        cwd: WORK_DIR, encoding: 'utf-8', timeout: cmdTimeout,
                         stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 50 * 1024 * 1024
                     });
-                    return { success: true, output: output.slice(0, 50000), exitCode: 0 };
+                    return { success: true, output: output.slice(0, 50000), exitCode: 0, duration: Math.round(cmdTimeout / 1000) };
                 } catch (e) {
                     return { success: false, output: (e.stdout || '').slice(0, 30000), error: (e.stderr || e.message || '').slice(0, 20000), exitCode: e.status || 1 };
                 }
@@ -1061,6 +1073,14 @@ const server = createServer(async (req, res) => {
             }
         }
 
+        // ── Chat Title Generation ─────────────────────────
+        if (url.pathname === '/api/chats/title' && req.method === 'POST') {
+            const { message } = await readBody(req);
+            if (!message) return sendJSON(res, 400, { error: 'No message' });
+            const title = message.replace(/```[\s\S]*?```/g, '').replace(/[^\w\s-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+            return sendJSON(res, 200, { title: title || 'New Conversation' });
+        }
+
         // ── Agent Endpoint (always limitless) ────────────────
         if (url.pathname === '/api/agent' && req.method === 'POST') {
             const { chatId, messages, userMessage } = await readBody(req);
@@ -1144,6 +1164,18 @@ const server = createServer(async (req, res) => {
         try { sendJSON(res, 500, { error: err.message }); } catch {}
     }
 });
+
+// ─── Graceful Shutdown ───────────────────────────────────
+function shutdown(signal) {
+    console.log(`\n  [${signal}] Shutting down gracefully...`);
+    server.close(() => {
+        console.log('  Server stopped.');
+        process.exit(0);
+    });
+    setTimeout(() => { console.log('  Forced exit.'); process.exit(1); }, 5000).unref();
+}
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 server.listen(PORT, () => {
     console.log(`\n  Dashboard running at http://localhost:${PORT}`);

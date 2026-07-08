@@ -393,19 +393,25 @@ select{appearance:none;cursor:pointer;background-image:url("data:image/svg+xml,%
       <!-- Welcome -->
       <div class="welcome" id="welcomeScreen">
         <h2>What can I help you with?</h2>
-        <p>Start a conversation below, or pick one of the suggestions</p>
+        <p>Start a conversation below, or pick a suggestion</p>
         <div class="welcome-grid">
-          <div class="welcome-card" onclick="sendSuggestion('Explain what you can help me with')">
-            <div class="wc-icon">💡</div><div class="wc-title">Capabilities</div><div class="wc-desc">What can you do?</div>
+          <div class="welcome-card" onclick="sendSuggestion('Create a new React component with TypeScript that fetches and displays user data from an API')">
+            <div class="wc-icon">⚛️</div><div class="wc-title">React Component</div><div class="wc-desc">TypeScript + API fetch</div>
           </div>
-          <div class="welcome-card" onclick="sendSuggestion('Write a Python script that lists all files in a directory')">
-            <div class="wc-icon">🐍</div><div class="wc-title">Write Code</div><div class="wc-desc">Generate a Python script</div>
+          <div class="welcome-card" onclick="sendSuggestion('Write a bash script to find and delete all node_modules folders recursively from this directory')">
+            <div class="wc-icon">🗑️</div><div class="wc-title">Cleanup Script</div><div class="wc-desc">Bash automation</div>
           </div>
-          <div class="welcome-card" onclick="sendSuggestion('Help me debug this error: ')">
-            <div class="wc-icon">🐛</div><div class="wc-title">Debug</div><div class="wc-desc">Troubleshoot an error</div>
+          <div class="welcome-card" onclick="sendSuggestion('Create a Python FastAPI backend with SQLite for a todo list app with full CRUD endpoints')">
+            <div class="wc-icon">🐍</div><div class="wc-title">FastAPI Backend</div><div class="wc-desc">Python + SQLite</div>
           </div>
-          <div class="welcome-card" onclick="sendSuggestion('Summarize the following text for me: ')">
-            <div class="wc-icon">📝</div><div class="wc-title">Summarize</div><div class="wc-desc">Condense any content</div>
+          <div class="welcome-card" onclick="sendSuggestion('Initialize a git repo, set up the project structure, and make the first commit')">
+            <div class="wc-icon">🚀</div><div class="wc-title">Project Setup</div><div class="wc-desc">Git init + structure</div>
+          </div>
+          <div class="welcome-card" onclick="sendSuggestion('Search for all TODO comments in this project and summarize what needs to be done')">
+            <div class="wc-icon">🔍</div><div class="wc-title">Find TODOs</div><div class="wc-desc">Scan project</div>
+          </div>
+          <div class="welcome-card" onclick="sendSuggestion('Set up ESLint, Prettier, and husky pre-commit hooks for this project')">
+            <div class="wc-icon">✨</div><div class="wc-title">Lint Setup</div><div class="wc-desc">ESLint + Prettier</div>
           </div>
         </div>
       </div>
@@ -857,7 +863,9 @@ async function sendMessage() {
         existing.messages = existing.messages || [];
         existing.messages.push({ role: 'user', content: text });
         existing.updated = new Date().toISOString();
-        if (!existing.title || existing.title === 'New Conversation') existing.title = text.slice(0, 50);
+        if (!existing.title || existing.title === 'New Conversation') {
+          existing.title = text.replace(/```[\s\S]*?```/g,'').replace(/[^\w\s-]/g,' ').replace(/\s+/g,' ').trim().slice(0,60) || 'New Conversation';
+        }
         await fetch(`${API}/api/chats/${currentChatId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(existing) }).catch(() => {});
       }
     } catch {}
