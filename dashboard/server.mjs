@@ -1036,11 +1036,16 @@ async function streamChatResponse(messages, cfg, res) {
     res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
+        'Connection': 'close',
         'Access-Control-Allow-Origin': '*',
     });
 
-    const sendSSE = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+    const sendSSE = (data) => {
+        try {
+            if (res.writableEnded) return;
+            res.write(`data: ${JSON.stringify(data)}\n\n`);
+        } catch {}
+    };
 
     // ── OpenAI-compatible (OpenRouter, Ollama, OpenAI) ────────
     if (provider === 'openai' || provider === 'ollama') {
@@ -1450,11 +1455,21 @@ const server = createServer(async (req, res) => {
             res.writeHead(200, {
                 'Content-Type': 'text/event-stream',
                 'Cache-Control': 'no-cache',
-                'Connection': 'keep-alive',
+                'Connection': 'close',
                 'Access-Control-Allow-Origin': '*',
             });
 
-            const sendSSE = (data) => { try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch {} };
+            const sendSSE = (data) => {
+                try {
+                    if (res.writableEnded) return;
+                    res.write(`data: ${JSON.stringify(data)}\n\n`);
+                } catch {}
+            };
+
+            // Clean up on client disconnect
+            let aborted = false;
+            req.on('close', () => { aborted = true; });
+            req.on('error', () => { aborted = true; });
 
             if (!cfg.AI_PROVIDER) {
                 sendSSE({ type: 'agent_error', error: 'No AI provider configured. Please complete setup first.' });
@@ -1465,9 +1480,9 @@ const server = createServer(async (req, res) => {
             const allMessages = [...history, { role: 'user', content: userMessage }];
 
             try {
-                const fullText = await runAgent(allMessages, cfg, sendSSE);
+                const fullText = aborted ? null : await runAgent(allMessages, cfg, sendSSE);
 
-                if (chatId && fullText) {
+                if (!aborted && chatId && fullText) {
                     const existing = loadChat(chatId) || { id: chatId, title: userMessage.slice(0, 50), created: new Date().toISOString(), messages: [] };
                     existing.messages.push({ role: 'user', content: userMessage }, { role: 'assistant', content: fullText });
                     existing.updated = new Date().toISOString();
@@ -1477,7 +1492,7 @@ const server = createServer(async (req, res) => {
             } catch (e) {
                 const errText = `⚠️ Agent Error: ${e.message}`;
                 sendSSE({ type: 'agent_error', error: e.message });
-                if (chatId) {
+                if (!aborted && chatId) {
                     const existing = loadChat(chatId) || { id: chatId, title: userMessage.slice(0, 50), created: new Date().toISOString(), messages: [] };
                     existing.messages.push({ role: 'user', content: userMessage }, { role: 'assistant', content: errText });
                     existing.updated = new Date().toISOString();
@@ -1506,7 +1521,19 @@ const server = createServer(async (req, res) => {
                 ...history,
                 { role: 'user', content: userMessage },
             ];
-            const fullText = await streamChatResponse(allMessages, cfg, res);
+
+            res.writeHead(200, {
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache',
+                'Connection': 'close',
+                'Access-Control-Allow-Origin': '*',
+            });
+
+            let aborted = false;
+            req.on('close', () => { aborted = true; });
+            req.on('error', () => { aborted = true; });
+
+            const fullText = aborted ? '' : await streamChatResponse(allMessages, cfg, res);
 
             if (chatId && fullText) {
                 const existing = loadChat(chatId) || { id: chatId, title: userMessage.slice(0, 50), created: new Date().toISOString(), messages: [] };
@@ -1543,3 +1570,7 @@ server.listen(PORT, () => {
     console.log(`  Agent working directory: ${WORK_DIR}`);
     console.log('  Press Ctrl+C to stop.\n');
 });
+
+// Prevent keep-alive socket reuse from corrupting SSE connections
+server.keepAliveTimeout = 5000;
+server.headersTimeout = 0;
