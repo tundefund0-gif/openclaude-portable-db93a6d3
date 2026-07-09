@@ -687,7 +687,11 @@ async function callAI_OpenAI(messages, cfg, includeTools = true) {
     }
     const resp = await fetchExternal(`${baseUrl}/chat/completions`, headers, body, 'POST');
     let data;
-    try { data = JSON.parse(resp.data); } catch { throw new Error(`Invalid response (HTTP ${resp.status}): ${resp.data.slice(0, 300)}`); }
+    try { data = JSON.parse(resp.data); } catch {
+        const preview = resp.data.slice(0, 500);
+        console.error(`[API] HTTP ${resp.status} from ${baseUrl}/chat/completions: ${preview}`);
+        throw new Error(`Invalid response (HTTP ${resp.status}): ${preview}`);
+    }
     // Check for API-level error
     if (data.error) {
         const errMsg = data.error.message || data.error.code || JSON.stringify(data.error);
@@ -838,6 +842,12 @@ async function callAIWithRetry(messages, cfg, includeTools, sendSSE, attempt = 1
     } catch (e) {
         const msg = (e.message || '').toLowerCase();
         const isRetryable = isSSLError(e) || msg.includes('5') || msg.includes('internal server') || msg.includes('service unavailable') || msg.includes('bad gateway') || msg.includes('rate limit') || msg.includes('too many requests') || msg.includes('timeout');
+        // 4xx errors (except 429) are NOT retryable — they'd just fail again
+        const isClientError = msg.includes('http 40') || msg.includes('http 41') || msg.includes('http 42') || msg.includes('bad request');
+        if (isClientError && !msg.includes('429') && !msg.includes('rate limit') && !msg.includes('too many')) {
+            sendSSE({ type: 'agent_error', error: `⚠️ Provider rejected request (HTTP 400). This usually means: (1) model name is wrong/decommissioned, (2) API key is invalid/expired, (3) request format unsupported. Check Settings → Provider. Raw error: ${e.message}` });
+            throw e;
+        }
         if (isRetryable && attempt <= MAX_RETRIES) {
             const delay = Math.min(500 * Math.pow(2, attempt), 30000);
             sendSSE({ type: 'agent_reasoning', content: `⚠️ API error (attempt ${attempt}/${MAX_RETRIES}), retrying in ${delay/1000}s...`, iteration: 1 });
@@ -915,7 +925,12 @@ RULES:
         } catch (e) {
             if (iter === 0) {
                 try {
-                    if (isSSLError(e) || (e.message && (e.message.includes('tool') || e.message.includes('function')))) {
+                    const msg = (e.message || '').toLowerCase();
+                    if (msg.includes('400') || msg.includes('bad request')) {
+                        sendSSE({ type: 'agent_error', error: `⚠️ Provider rejected request (HTTP 400). Check model name, API key, and provider settings. Raw: ${e.message}` });
+                        return e.message;
+                    }
+                    if (isSSLError(e) || e.message?.includes('tool') || e.message?.includes('function')) {
                         sendSSE({ type: 'agent_reasoning', content: '⚠️ Tool calling not supported by this model, falling back to chat mode...', iteration: 1 });
                     } else {
                         sendSSE({ type: 'agent_reasoning', content: `Retrying without tools...`, iteration: 1 });
