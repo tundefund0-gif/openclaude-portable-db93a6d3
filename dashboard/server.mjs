@@ -866,23 +866,34 @@ async function runAgent(allMessages, cfg, sendSSE) {
     let finalText = '';
     let lastCommitHash = '';
     let taskAttempted = '';
+    let realToolCalls = 0;
+    let consecutiveTextOnly = 0;
+    let verificationInjected = false;
 
     const toolsList = 'think, write_file, edit_file, read_file, list_directory, execute_command, search_files, web_search, web_fetch';
 
-    let systemPrompt = `You are an elite autonomous AI coding agent. You produce clean, complete, production-ready output every time. No explanations of what you're about to do — just DO it. No preambles, no disclaimers, no "I'll start by...", no "let me..." — execute immediately and directly.
+    let systemPrompt = `You are an elite autonomous AI coding agent. You produce results by using tools, not by describing what you would do.
 
-Available tools: ${toolsList}. Working directory: ${WORK_DIR}.
-RULES:
-(1) Start with think tool to plan briefly, then execute.
-(2) NEVER describe what you're going to do — just use the tools and do it.
-(3) NEVER ask the user for permission or clarification. Make reasonable assumptions and proceed.
-(4) If a command or tool fails, diagnose the issue and fix it immediately.
-(5) For multi-step tasks, work systematically until fully complete.
-(6) Use edit_file for small edits instead of rewriting entire files.
-(7) Use execute_command for git operations, npm/pip installs, compiling, and any shell task.
-(8) Write complete, production-ready files — no TODOs, no placeholders, no stubs.
-(9) Keep going until the task is 100% done. NEVER STOP MID-WAY.
-(10) Output clean, formatted text. No markdown wrappers around your responses.`;
+CRITICAL RULE — EXECUTE OR VERIFY, NEVER JUST DESCRIBE:
+- If you describe what needs to be done without calling the corresponding tool, you are lying.
+- Every file change requires a write_file or edit_file tool call.
+- Every command requires an execute_command tool call.
+- If you haven't called any tools in this conversation, you haven't done anything.
+- After completing work, ALWAYS call read_file or execute_command to verify the result looks correct.
+
+Available tools: think (plan only), write_file (create/overwrite), edit_file (surgical edit), read_file, list_directory, execute_command (shell commands), search_files (grep). Working directory: ${WORK_DIR}.
+
+STRICT RULES:
+(1) Use think tool to plan, then use real tools to execute.
+(2) NEVER describe what you will do — instead, just call the tool and do it.
+(3) Writing text about a task is NOT the same as doing the task. Text is cheap. Tool calls are execution.
+(4) NEVER ask permission. Make reasonable assumptions and proceed.
+(5) If a command fails, diagnose and fix it immediately.
+(6) Work systematically until 100% complete.
+(7) Use edit_file for small changes, write_file for new files.
+(8) Write complete, production-ready code — no TODOs, no stubs.
+(9) Keep going until done. NEVER STOP.
+(10) After every write/edit/command, verify the result is correct by reading or running it.`;
 
     if (godMode.memory) {
         const userTask = allMessages.length > 0 ? (allMessages[allMessages.length - 1]?.content || '') : '';
@@ -904,7 +915,7 @@ RULES:
     }
 
     // Dead code will not be tolerated. You MUST verify your work before declaring completion.
-    allMessages.push({ role: 'user', content: 'CRITICAL RULE: Before declaring any task complete, you MUST verify your work actually works. Run the code, check file contents, execute tests. If you cannot verify success, continue working. Saying "done" without verification is lying.' });
+    allMessages.push({ role: 'user', content: 'STRICT ENFORCEMENT: You MUST call at least one tool (write_file, edit_file, execute_command) to complete any task. If the task is done, prove it — read the file or run the code to confirm. Text alone is never sufficient.' });
 
     // ── Snapshot current git state for rollback ──
     if (godMode.enabled && godMode.autoRollback) {
@@ -957,6 +968,11 @@ RULES:
         }
 
         if (aiResponse.toolCalls.length > 0) {
+            // Count real tool calls (skip think tool)
+            for (const tc of aiResponse.toolCalls) {
+                if (tc.name !== 'think') realToolCalls++;
+            }
+            consecutiveTextOnly = 0;
             appendAssistantMessage(allMessages, aiResponse, provider);
 
             let anyFailure = false;
@@ -1015,8 +1031,26 @@ RULES:
         }
 
         if (aiResponse.content) {
+            if (realToolCalls === 0) {
+                consecutiveTextOnly++;
+                if (consecutiveTextOnly >= 2) {
+                    sendSSE({ type: 'agent_reasoning', content: `⚠️ You keep responding with text but haven't called any tools. Task requires tool execution. Stop describing and start doing.`, iteration: iter + 1 });
+                    allMessages.push({ role: 'user', content: 'You responded with text but did not call any tools. The task requires you to actually execute — use write_file, edit_file, execute_command, or read_file. CALL THE TOOL.' });
+                    consecutiveTextOnly = 0;
+                    continue;
+                }
+                sendSSE({ type: 'agent_reasoning', content: `⚠️ Text only — no tools called yet. Use tools to execute.`, iteration: iter + 1 });
+                allMessages.push({ role: 'user', content: 'Execute the task using tools. Call write_file, edit_file, execute_command, or read_file. Text alone does nothing.' });
+                continue;
+            }
+            // Agent did real work — report text, then optionally verify once
             finalText = aiResponse.content;
             sendSSE({ type: 'agent_text', content: finalText });
+            if (!verificationInjected) {
+                verificationInjected = true;
+                allMessages.push({ role: 'user', content: 'Verify your work. Run tests, check file contents, or execute the code to confirm everything works.' });
+                continue;
+            }
         }
         break;
     }
